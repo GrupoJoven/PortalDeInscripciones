@@ -1,0 +1,5 @@
+{
+  "name": "Portal de Control de Acceso a Inscripciones",
+  "description": "Un portal configurable para gestionar el acceso a múltiples formularios de Google Forms, con control por identificador único y panel de administración.",
+  "requestFramePermissions": []
+}
