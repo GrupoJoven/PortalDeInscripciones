@@ -24,7 +24,7 @@ export default function FormCard({ form }: { form: PublicHomeForm }) {
         </div>
       </div>
 
-      <p className="text-slate-600 mb-6 line-clamp-3">
+      <p className="text-slate-600 mb-6 max-h-32 overflow-y-auto">
         {form.description || 'Sin descripción disponible.'}
       </p>
 
