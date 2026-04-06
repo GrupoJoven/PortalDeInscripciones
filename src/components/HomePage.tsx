@@ -287,14 +287,14 @@ export default function HomePage() {
             type="text"
             value={publicId}
             onChange={(e) => setPublicId(e.target.value.toUpperCase())}
-            placeholder="Introduce tu identificador..."
-            className="block w-full pl-12 pr-4 py-4 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all text-lg shadow-sm"
+            placeholder="SANP-XXXX-XXX"
+            className="block w-full pl-12 pr-28 py-4 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all text-lg shadow-sm"
           />
 
           <button
             type="submit"
             disabled={checkingAccess}
-            className="absolute right-2 top-2 bottom-2 px-6 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
+            className="absolute right-2 top-1/2 -translate-y-1/2 px-4 py-2 bg-indigo-600 text-white rounded-lg font-semibold text-sm hover:bg-indigo-700 transition-colors disabled:opacity-50"
           >
             {checkingAccess ? 'Verificando...' : 'Verificar'}
           </button>
