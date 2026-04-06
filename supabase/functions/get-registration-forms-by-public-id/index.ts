@@ -13,6 +13,18 @@ type RestrictedForm = {
   url: string;
   open_date: string | null;
   close_date: string | null;
+  access_type: "restricted";
+};
+
+type StudentRow = {
+  id: string;
+  name: string;
+  dni: string;
+  gender: string;
+  parent_email: string | null;
+  school: string;
+  birth_date: string | null;
+  group_id: string | null;
 };
 
 Deno.serve(async (req) => {
@@ -27,9 +39,10 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const internalEmailSecret = Deno.env.get("INTERNAL_EMAIL_FUNCTION_SECRET");
 
-    if (!supabaseUrl || !serviceRoleKey) {
-      console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+    if (!supabaseUrl || !serviceRoleKey || !internalEmailSecret) {
+      console.error("Missing SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY or INTERNAL_EMAIL_FUNCTION_SECRET");
       return jsonResponse({ ok: false, error: "server_configuration_error" }, 500);
     }
 
@@ -39,13 +52,13 @@ Deno.serve(async (req) => {
     const rawPublicId = body?.public_id;
 
     if (typeof rawPublicId !== "string") {
-      return jsonResponse({ ok: true, forms: [] }, 200);
+      return jsonResponse({ ok: true, status: "not_found", forms: [] }, 200);
     }
 
     const publicId = rawPublicId.trim().toUpperCase();
 
     if (!publicId) {
-      return jsonResponse({ ok: true, forms: [] }, 200);
+      return jsonResponse({ ok: true, status: "not_found", forms: [] }, 200);
     }
 
     const { data: accessRow, error: accessError } = await supabase
@@ -60,14 +73,14 @@ Deno.serve(async (req) => {
     }
 
     if (!accessRow?.student_id) {
-      return jsonResponse({ ok: true, forms: [] }, 200);
+      return jsonResponse({ ok: true, status: "not_found", forms: [] }, 200);
     }
 
     const { data: studentRow, error: studentError } = await supabase
       .from("students")
       .select("id, name, dni, gender, parent_email, school, birth_date, group_id")
       .eq("id", accessRow.student_id)
-      .maybeSingle();
+      .maybeSingle<StudentRow>();
 
     if (studentError) {
       console.error("Error fetching student:", studentError);
@@ -75,114 +88,283 @@ Deno.serve(async (req) => {
     }
 
     if (!studentRow?.group_id) {
-      return jsonResponse({ ok: true, forms: [] }, 200);
+      return jsonResponse({ ok: true, status: "not_found", forms: [] }, 200);
     }
 
-    const { data: groupRow, error: groupError } = await supabase
-      .from("groups")
-      .select("name")
-      .eq("id", studentRow.group_id)
+    const normalizedEmail = normalizeEmail(studentRow.parent_email);
+
+    if (!normalizedEmail || !isValidEmail(normalizedEmail)) {
+      return jsonResponse(
+        {
+          ok: true,
+          status: "verification_required",
+          forms: [],
+          message:
+            "El correo de contacto asociado a este alumno no es válido. Debes contactar con la parroquia para corregirlo.",
+        },
+        200
+      );
+    }
+
+    const { data: verifiedRow, error: verifiedError } = await supabase
+      .from("parent_email_verifications")
+      .select("id, verified_at")
+      .eq("normalized_email", normalizedEmail)
       .maybeSingle();
 
-    if (groupError) {
-      console.error("Error fetching group:", groupError);
+    if (verifiedError) {
+      console.error("Error fetching parent_email_verifications:", verifiedError);
       return jsonResponse({ ok: false, error: "internal_error" }, 500);
     }
 
-    const groupName = groupRow?.name ?? "";
-
-    const { data: relationRows, error: relationError } = await supabase
-      .from("registration_form_groups")
-      .select("form_id")
-      .eq("group_id", studentRow.group_id);
-
-    if (relationError) {
-      console.error("Error fetching registration_form_groups:", relationError);
-      return jsonResponse({ ok: false, error: "internal_error" }, 500);
-    }
-
-    const formIds = [...new Set((relationRows ?? []).map((row) => row.form_id).filter(Boolean))];
-
-    if (formIds.length === 0) {
-      return jsonResponse({ ok: true, forms: [] }, 200);
-    }
-
-    const { data: formsData, error: formsError } = await supabase
-      .from("registration_forms")
-      .select(`
-        id,
-        title,
-        description,
-        url,
-        active,
-        access_type,
-        open_date,
-        close_date,
-        prefill_name_entry,
-        prefill_dni_entry,
-        prefill_gender_entry,
-        prefill_parent_email_entry,
-        prefill_school_entry,
-        prefill_birth_date_entry,
-        prefill_group_entry
-      `)
-      .in("id", formIds)
-      .eq("active", true)
-      .eq("access_type", "restricted");
-
-    if (formsError) {
-      console.error("Error fetching registration_forms:", formsError);
-      return jsonResponse({ ok: false, error: "internal_error" }, 500);
-    }
-
-    const now = Date.now();
-
-    const forms: RestrictedForm[] = (formsData ?? [])
-      .filter((form) => {
-        if (!form) return false;
-        if (form.active !== true) return false;
-        if (form.access_type !== "restricted") return false;
-
-        if (form.open_date) {
-          const openTime = new Date(form.open_date).getTime();
-          if (Number.isNaN(openTime)) return false;
-        }
-
-        if (form.close_date) {
-          const closeTime = new Date(form.close_date).getTime();
-          if (Number.isNaN(closeTime) || now > closeTime) return false;
-        }
-
-        return true;
-      })
-      .map((form) => ({
-        id: form.id,
-        title: form.title,
-        description: form.description,
-        url: buildPrefilledUrl(form.url, {
-          [form.prefill_name_entry]: studentRow.name,
-          [form.prefill_dni_entry]: studentRow.dni,
-          [form.prefill_gender_entry]: studentRow.gender,
-          [form.prefill_parent_email_entry]: studentRow.parent_email,
-          [form.prefill_school_entry]: studentRow.school,
-          [form.prefill_birth_date_entry]: formatBirthDate(studentRow.birth_date),
-          [form.prefill_group_entry]: groupName,
-        }),
-        open_date: form.open_date,
-        close_date: form.close_date,
-      }))
-      .sort((a, b) => {
-        const aTime = a.open_date ? new Date(a.open_date).getTime() : 0;
-        const bTime = b.open_date ? new Date(b.open_date).getTime() : 0;
-        return bTime - aTime;
+    if (!verifiedRow) {
+      await ensureVerificationEmailSent({
+        supabase,
+        supabaseUrl,
+        serviceRoleKey,
+        internalEmailSecret,
+        studentId: studentRow.id,
+        publicId,
+        email: studentRow.parent_email!,
+        normalizedEmail,
+        studentName: studentRow.name,
       });
 
-    return jsonResponse({ ok: true, forms }, 200);
+      return jsonResponse(
+        {
+          ok: true,
+          status: "verification_required",
+          forms: [],
+          message:
+            "Te hemos enviado un correo de verificación. Hasta que no pulses el enlace del email no podrás acceder a los formularios.",
+        },
+        200
+      );
+    }
+
+    const forms = await getRestrictedFormsForStudent(supabase, studentRow, publicId);
+
+    return jsonResponse({ ok: true, status: "verified", forms }, 200);
   } catch (error) {
     console.error("Unhandled error in get-registration-forms-by-public-id:", error);
     return jsonResponse({ ok: false, error: "internal_error" }, 500);
   }
 });
+
+async function getRestrictedFormsForStudent(
+  supabase: ReturnType<typeof createClient>,
+  studentRow: StudentRow,
+  publicId: string
+) {
+  const { data: groupRow, error: groupError } = await supabase
+    .from("groups")
+    .select("name")
+    .eq("id", studentRow.group_id)
+    .maybeSingle();
+
+  if (groupError) {
+    console.error("Error fetching group:", groupError);
+    throw groupError;
+  }
+
+  const groupName = groupRow?.name ?? "";
+
+  const { data: relationRows, error: relationError } = await supabase
+    .from("registration_form_groups")
+    .select("form_id")
+    .eq("group_id", studentRow.group_id);
+
+  if (relationError) {
+    console.error("Error fetching registration_form_groups:", relationError);
+    throw relationError;
+  }
+
+  const formIds = [...new Set((relationRows ?? []).map((row) => row.form_id).filter(Boolean))];
+
+  if (formIds.length === 0) {
+    return [];
+  }
+
+  const { data: formsData, error: formsError } = await supabase
+    .from("registration_forms")
+    .select(`
+      id,
+      title,
+      description,
+      url,
+      active,
+      access_type,
+      open_date,
+      close_date,
+      prefill_public_id_entry,
+      prefill_name_entry,
+      prefill_dni_entry,
+      prefill_gender_entry,
+      prefill_parent_email_entry,
+      prefill_school_entry,
+      prefill_birth_date_entry,
+      prefill_group_entry
+    `)
+    .in("id", formIds)
+    .eq("active", true)
+    .eq("access_type", "restricted");
+
+  if (formsError) {
+    console.error("Error fetching registration_forms:", formsError);
+    throw formsError;
+  }
+
+  const now = Date.now();
+
+  const forms: RestrictedForm[] = (formsData ?? [])
+    .filter((form) => {
+      if (!form) return false;
+      if (form.active !== true) return false;
+      if (form.access_type !== "restricted") return false;
+
+      if (form.open_date) {
+        const openTime = new Date(form.open_date).getTime();
+        if (Number.isNaN(openTime)) return false;
+      }
+
+      if (form.close_date) {
+        const closeTime = new Date(form.close_date).getTime();
+        if (Number.isNaN(closeTime) || now > closeTime) return false;
+      }
+
+      return true;
+    })
+    .map((form) => ({
+      id: form.id,
+      title: form.title,
+      description: form.description,
+      url: buildPrefilledUrl(form.url, {
+        [form.prefill_public_id_entry]: publicId,
+        [form.prefill_name_entry]: studentRow.name,
+        [form.prefill_dni_entry]: studentRow.dni,
+        [form.prefill_gender_entry]: studentRow.gender,
+        [form.prefill_parent_email_entry]: studentRow.parent_email,
+        [form.prefill_school_entry]: studentRow.school,
+        [form.prefill_birth_date_entry]: formatBirthDate(studentRow.birth_date),
+        [form.prefill_group_entry]: groupName,
+      }),
+      open_date: form.open_date,
+      close_date: form.close_date,
+      access_type: "restricted",
+    }))
+    .sort((a, b) => {
+      const aTime = a.open_date ? new Date(a.open_date).getTime() : 0;
+      const bTime = b.open_date ? new Date(b.open_date).getTime() : 0;
+      return bTime - aTime;
+    });
+
+  return forms;
+}
+
+async function ensureVerificationEmailSent({
+  supabase,
+  supabaseUrl,
+  serviceRoleKey,
+  internalEmailSecret,
+  studentId,
+  publicId,
+  email,
+  normalizedEmail,
+  studentName,
+}: {
+  supabase: ReturnType<typeof createClient>;
+  supabaseUrl: string;
+  serviceRoleKey: string;
+  internalEmailSecret: string;
+  studentId: string;
+  publicId: string;
+  email: string;
+  normalizedEmail: string;
+  studentName: string;
+}) {
+  const now = Date.now();
+  const tenMinutesAgoIso = new Date(now - 10 * 60 * 1000).toISOString();
+
+  const { data: recentToken, error: recentTokenError } = await supabase
+    .from("parent_email_verification_tokens")
+    .select("id, created_at")
+    .eq("normalized_email", normalizedEmail)
+    .eq("public_id", publicId)
+    .is("consumed_at", null)
+    .gt("created_at", tenMinutesAgoIso)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (recentTokenError) {
+    console.error("Error checking recent token:", recentTokenError);
+    throw recentTokenError;
+  }
+
+  if (recentToken) {
+    return;
+  }
+
+  const rawToken = `${crypto.randomUUID()}${crypto.randomUUID()}`.replaceAll("-", "");
+  const tokenHash = await sha256(rawToken);
+  const expiresAt = new Date(now + 24 * 60 * 60 * 1000).toISOString();
+
+  const { error: insertError } = await supabase
+    .from("parent_email_verification_tokens")
+    .insert({
+      student_id: studentId,
+      public_id: publicId,
+      email,
+      normalized_email: normalizedEmail,
+      token_hash: tokenHash,
+      expires_at: expiresAt,
+    });
+
+  if (insertError) {
+    console.error("Error inserting verification token:", insertError);
+    throw insertError;
+  }
+
+  const sendResponse = await fetch(
+    `${supabaseUrl}/functions/v1/send-parent-verification-email`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+        "x-internal-function-secret": internalEmailSecret,
+      },
+      body: JSON.stringify({
+        to: email,
+        student_name: studentName,
+        public_id: publicId,
+        token: rawToken,
+      }),
+    }
+  );
+
+  const sendResult = await sendResponse.json().catch(() => null);
+
+  if (!sendResponse.ok || !sendResult?.ok) {
+    console.error("Error sending verification email:", sendResult);
+    throw new Error("email_send_failed");
+  }
+}
+
+function normalizeEmail(email: string | null | undefined) {
+  return (email ?? "").trim().toLowerCase();
+}
+
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+async function sha256(value: string) {
+  const data = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 function buildPrefilledUrl(
   baseUrl: string,

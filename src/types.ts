@@ -9,6 +9,7 @@ export interface RegistrationForm {
   close_date: string | null;
   created_at: string;
   group_ids: string[];
+  prefill_public_id_entry: string | null;
   prefill_name_entry: string | null;
   prefill_dni_entry: string | null;
   prefill_gender_entry: string | null;
@@ -16,7 +17,47 @@ export interface RegistrationForm {
   prefill_school_entry: string | null;
   prefill_birth_date_entry: string | null;
   prefill_group_entry: string | null;
-};
+  google_form_id: string | null;
+  google_form_watch_enabled: boolean;
+  response_public_id_question_id: string | null;
+  response_name_question_id: string | null;
+  response_dni_question_id: string | null;
+  response_gender_question_id: string | null;
+  response_parent_email_question_id: string | null;
+  response_school_question_id: string | null;
+  response_birth_date_question_id: string | null;
+  response_group_question_id: string | null;
+}
+
+export interface EditingForm {
+  id?: string;
+  title: string;
+  description: string;
+  url: string;
+  active: boolean;
+  access_type: 'public' | 'restricted';
+  open_date: string;
+  close_date: string;
+  group_ids: string[];
+  prefill_public_id_entry: string;
+  prefill_name_entry: string;
+  prefill_dni_entry: string;
+  prefill_gender_entry: string;
+  prefill_parent_email_entry: string;
+  prefill_school_entry: string;
+  prefill_birth_date_entry: string;
+  prefill_group_entry: string;
+  google_form_id: string;
+  google_form_watch_enabled: boolean;
+  response_public_id_question_id: string;
+  response_name_question_id: string;
+  response_dni_question_id: string;
+  response_gender_question_id: string;
+  response_parent_email_question_id: string;
+  response_school_question_id: string;
+  response_birth_date_question_id: string;
+  response_group_question_id: string;
+}
 
 export interface GroupOption {
   id: string;
@@ -36,24 +77,6 @@ export interface StudentAccessRow {
   public_id: string | null;
 };
 
-export interface EditingForm {
-  id?: string;
-  title: string;
-  description: string;
-  url: string;
-  active: boolean;
-  access_type: 'public' | 'restricted';
-  open_date: string;
-  close_date: string;
-  group_ids: string[];
-  prefill_name_entry: string;
-  prefill_dni_entry: string;
-  prefill_gender_entry: string;
-  prefill_parent_email_entry: string;
-  prefill_school_entry: string;
-  prefill_birth_date_entry: string;
-  prefill_group_entry: string;
-};
 
 export interface PublicHomeForm {
   id: string;
@@ -62,13 +85,38 @@ export interface PublicHomeForm {
   url: string;
   open_date: string | null;
   close_date: string | null;
+  access_type: 'public' | 'restricted';
 };
 
 export interface PublicFormsResponse {
   ok: boolean;
+  status?: 'verified' | 'verification_required' | 'not_found';
   forms: PublicHomeForm[];
+  message?: string;
   error?: string;
 };
+
+export interface VerifyParentEmailResponse {
+  ok: boolean;
+  status?: 'verified' | 'already_verified';
+  public_id?: string;
+  error?: string;
+}
+
+export interface VerifyPublicFormEmailResponse {
+  ok: boolean;
+  status?: 'verified' | 'already_verified';
+  access_url?: string;
+  error?: string;
+}
+
+export interface StartPublicFormEmailAccessResponse {
+  ok: boolean;
+  status?: 'verified' | 'verification_required';
+  access_url?: string;
+  message?: string;
+  error?: string;
+}
 
 
 export const toDatetimeLocalValue = (iso: string | null) => {

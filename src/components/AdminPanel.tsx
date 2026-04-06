@@ -59,6 +59,10 @@ export default function AdminPanel({
   const [error, setError] = useState('');
   const [editingForm, setEditingForm] = useState<EditingForm | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [formModalError, setFormModalError] = useState<string | null>(null);
+  const [syncingWatch, setSyncingWatch] = useState(false);
+  const [copySourceSelectorOpen, setCopySourceSelectorOpen] = useState(false);
+
 
   const loadFormsData = async () => {
     setLoadingForms(true);
@@ -132,7 +136,7 @@ export default function AdminPanel({
       await Promise.all([
         supabase
           .from('students')
-          .select('id, name, email, parent_email, school, group_id')
+          .select('id, name, dni, gender, email, parent_email, school, group_id')
           .order('name', { ascending: true }),
         supabase
           .from('groups')
@@ -198,6 +202,7 @@ export default function AdminPanel({
       open_date: '',
       close_date: '',
       group_ids: [],
+      prefill_public_id_entry: '',
       prefill_name_entry: '',
       prefill_dni_entry: '',
       prefill_gender_entry: '',
@@ -205,10 +210,25 @@ export default function AdminPanel({
       prefill_school_entry: '',
       prefill_birth_date_entry: '',
       prefill_group_entry: '',
+      google_form_id: '',
+      google_form_watch_enabled: true,
+      response_public_id_question_id: '',
+      response_name_question_id: '',
+      response_dni_question_id: '',
+      response_gender_question_id: '',
+      response_parent_email_question_id: '',
+      response_school_question_id: '',
+      response_birth_date_question_id: '',
+      response_group_question_id: '',
+
     });
+    setFormModalError(null);
+    setCopySourceSelectorOpen(false);
   };
 
   const openEditForm = async (form: RegistrationForm) => {
+    setFormModalError(null);
+    setCopySourceSelectorOpen(false);
     const { data: relData, error: relError } = await supabase
       .from('registration_form_groups')
       .select('group_id')
@@ -230,24 +250,133 @@ export default function AdminPanel({
       open_date: toDatetimeLocalValue(form.open_date),
       close_date: toDatetimeLocalValue(form.close_date),
       group_ids: (relData ?? []).map((r) => r.group_id),
+      prefill_public_id_entry: form.prefill_public_id_entry ?? '',
       prefill_name_entry: form.prefill_name_entry ?? '',
       prefill_dni_entry: form.prefill_dni_entry ?? '',
-      prefill_gender_entry: '',
+      prefill_gender_entry: form.prefill_gender_entry ?? '',
       prefill_parent_email_entry: form.prefill_parent_email_entry ?? '',
       prefill_school_entry: form.prefill_school_entry ?? '',
       prefill_birth_date_entry: form.prefill_birth_date_entry ?? '',
       prefill_group_entry: form.prefill_group_entry ?? '',
+      google_form_id: form.google_form_id ?? '',
+      google_form_watch_enabled: form.google_form_watch_enabled ?? false,
+      response_public_id_question_id: form.response_public_id_question_id ?? '',
+      response_name_question_id: form.response_name_question_id ?? '',
+      response_dni_question_id: form.response_dni_question_id ?? '',
+      response_gender_question_id: form.response_gender_question_id ?? '',
+      response_parent_email_question_id: form.response_parent_email_question_id ?? '',
+      response_school_question_id: form.response_school_question_id ?? '',
+      response_birth_date_question_id: form.response_birth_date_question_id ?? '',
+      response_group_question_id: form.response_group_question_id ?? '',
     });
+  };
+
+  const syncGoogleFormWatch = async (registrationFormId: string) => {
+    setSyncingWatch(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('google-forms-watch-sync', {
+        body: {
+          registration_form_id: registrationFormId,
+        },
+      });
+
+      if (error) {
+        console.error(error);
+        throw new Error('No se pudo sincronizar el watch del formulario.');
+      }
+
+      if (data?.ok === false) {
+        console.error(data);
+        throw new Error(
+          typeof data?.error === 'string'
+            ? data.error
+            : 'La sincronización del watch devolvió un error.'
+        );
+      }
+    } finally {
+      setSyncingWatch(false);
+    }
+  };
+
+  const getCompatibleFormsForCopy = (currentForm: EditingForm) => {
+    return forms.filter((form) => {
+      if (form.access_type !== currentForm.access_type) return false;
+      if (currentForm.id && form.id === currentForm.id) return false;
+
+      if (currentForm.google_form_watch_enabled && !form.google_form_watch_enabled) {
+        return false;
+      }
+
+      return true;
+    });
+  };
+
+  const copyIdentifiersFromForm = (sourceForm: RegistrationForm) => {
+    if (!editingForm) return;
+
+    const nextForm: EditingForm = {
+      ...editingForm,
+    };
+
+    if (editingForm.access_type === 'public') {
+      nextForm.prefill_parent_email_entry = sourceForm.prefill_parent_email_entry ?? '';
+
+      if (editingForm.google_form_watch_enabled) {
+        nextForm.response_parent_email_question_id =
+          sourceForm.response_parent_email_question_id ?? '';
+      }
+    }
+
+    if (editingForm.access_type === 'restricted') {
+      nextForm.prefill_public_id_entry = sourceForm.prefill_public_id_entry ?? '';
+      nextForm.prefill_name_entry = sourceForm.prefill_name_entry ?? '';
+      nextForm.prefill_dni_entry = sourceForm.prefill_dni_entry ?? '';
+      nextForm.prefill_gender_entry = sourceForm.prefill_gender_entry ?? '';
+      nextForm.prefill_parent_email_entry = sourceForm.prefill_parent_email_entry ?? '';
+      nextForm.prefill_school_entry = sourceForm.prefill_school_entry ?? '';
+      nextForm.prefill_birth_date_entry = sourceForm.prefill_birth_date_entry ?? '';
+      nextForm.prefill_group_entry = sourceForm.prefill_group_entry ?? '';
+
+      if (editingForm.google_form_watch_enabled) {
+        nextForm.response_public_id_question_id =
+          sourceForm.response_public_id_question_id ?? '';
+        nextForm.response_name_question_id =
+          sourceForm.response_name_question_id ?? '';
+        nextForm.response_dni_question_id =
+          sourceForm.response_dni_question_id ?? '';
+        nextForm.response_gender_question_id =
+          sourceForm.response_gender_question_id ?? '';
+        nextForm.response_parent_email_question_id =
+          sourceForm.response_parent_email_question_id ?? '';
+        nextForm.response_school_question_id =
+          sourceForm.response_school_question_id ?? '';
+        nextForm.response_birth_date_question_id =
+          sourceForm.response_birth_date_question_id ?? '';
+        nextForm.response_group_question_id =
+          sourceForm.response_group_question_id ?? '';
+      }
+    }
+
+    setEditingForm(nextForm);
+    setCopySourceSelectorOpen(false);
+    setFormModalError(null);
   };
 
   const saveForm = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormModalError(null);
+
     if (!editingForm) return;
 
     setError('');
 
     if (!editingForm.title.trim() || !editingForm.url.trim()) {
-      setError('El título y la URL son obligatorios.');
+      setFormModalError('El título y la URL son obligatorios.');
+      return;
+    }
+    if (editingForm.google_form_watch_enabled && !editingForm.google_form_id.trim()) {
+      setFormModalError('Si activas el seguimiento automático de respuestas, el ID del formulario de Google es obligatorio.');
       return;
     }
 
@@ -256,22 +385,70 @@ export default function AdminPanel({
       editingForm.close_date &&
       new Date(editingForm.close_date).getTime() <= new Date(editingForm.open_date).getTime()
     ) {
-      setError('La fecha de cierre debe ser posterior a la fecha de apertura.');
+      setFormModalError('La fecha de cierre debe ser posterior a la fecha de apertura.');
       return;
     }
     if (editingForm.access_type === 'restricted') {
-      const invalidPrefillField =
-        !isValidGoogleEntryKey(editingForm.prefill_name_entry) ? 'NOMBRE COMPLETO' :
-        !isValidGoogleEntryKey(editingForm.prefill_dni_entry) ? 'DNI' :
-        !isValidGoogleEntryKey(editingForm.prefill_gender_entry) ? 'GÉNERO' :
-        !isValidGoogleEntryKey(editingForm.prefill_parent_email_entry) ? 'EMAIL DE CONTACTO' :
-        !isValidGoogleEntryKey(editingForm.prefill_school_entry) ? 'COLEGIO' :
-        !isValidGoogleEntryKey(editingForm.prefill_birth_date_entry) ? 'FECHA DE NACIMIENTO' :
-        !isValidGoogleEntryKey(editingForm.prefill_group_entry) ? 'GRUPO' :
-        null;
+      const requiredRestrictedFields: Array<{ label: string; value: string }> = [
+        { label: 'IDENTIFICADOR', value: editingForm.prefill_public_id_entry },
+        { label: 'NOMBRE COMPLETO', value: editingForm.prefill_name_entry },
+        { label: 'DNI', value: editingForm.prefill_dni_entry },
+        { label: 'GÉNERO', value: editingForm.prefill_gender_entry },
+        { label: 'EMAIL DE CONTACTO', value: editingForm.prefill_parent_email_entry },
+        { label: 'COLEGIO', value: editingForm.prefill_school_entry },
+        { label: 'FECHA DE NACIMIENTO', value: editingForm.prefill_birth_date_entry },
+        { label: 'GRUPO', value: editingForm.prefill_group_entry },
+      ];
 
-      if (invalidPrefillField) {
-        setError(`El identificador de Google Forms para "${invalidPrefillField}" no es válido. Debe tener formato entry.123456789.`);
+      const missingField = requiredRestrictedFields.find((field) => !field.value.trim());
+      if (missingField) {
+        setFormModalError(`El identificador de Google Forms para "${missingField.label}" es obligatorio.`);
+        return;
+      }
+
+      const invalidField = requiredRestrictedFields.find((field) => !isValidGoogleEntryKey(field.value));
+      if (invalidField) {
+        setFormModalError(`El identificador de Google Forms para "${invalidField.label}" no es válido. Debe tener formato entry.123456789.`);
+        return;
+      }
+
+      if (editingForm.google_form_watch_enabled) {
+        const requiredRestrictedResponseFields: Array<{ label: string; value: string }> = [
+          { label: 'IDENTIFICADOR', value: editingForm.response_public_id_question_id },
+          { label: 'NOMBRE COMPLETO', value: editingForm.response_name_question_id },
+          { label: 'DNI', value: editingForm.response_dni_question_id },
+          { label: 'GÉNERO', value: editingForm.response_gender_question_id },
+          { label: 'EMAIL DE CONTACTO', value: editingForm.response_parent_email_question_id },
+          { label: 'COLEGIO', value: editingForm.response_school_question_id },
+          { label: 'FECHA DE NACIMIENTO', value: editingForm.response_birth_date_question_id },
+          { label: 'GRUPO', value: editingForm.response_group_question_id },
+        ];
+
+        const missingRestrictedResponseField = requiredRestrictedResponseFields.find(
+          (field) => !field.value.trim()
+        );
+
+        if (missingRestrictedResponseField) {
+          setFormModalError(
+            `El identificador de respuesta de Google Forms para "${missingRestrictedResponseField.label}" es obligatorio si se activa el seguimiento.`
+          );
+          return;
+        }
+      }
+    }
+
+    if (editingForm.access_type === 'public') {
+      if (!editingForm.prefill_parent_email_entry.trim()) {
+        setFormModalError('El identificador de Google Forms para "EMAIL DE CONTACTO" es obligatorio.');
+        return;
+      }
+      if (editingForm.google_form_watch_enabled && !editingForm.response_parent_email_question_id.trim()) {
+        setFormModalError('El identificador de respuesta de Google Forms para "EMAIL DE CONTACTO" es obligatorio si se activa el seguimiento.');
+        return;
+      }
+
+      if (!isValidGoogleEntryKey(editingForm.prefill_parent_email_entry)) {
+        setFormModalError('El identificador de Google Forms para "EMAIL DE CONTACTO" no es válido. Debe tener formato entry.123456789.');
         return;
       }
     }
@@ -286,6 +463,10 @@ export default function AdminPanel({
       access_type: editingForm.access_type,
       open_date: fromDatetimeLocalValue(editingForm.open_date),
       close_date: fromDatetimeLocalValue(editingForm.close_date),
+      prefill_public_id_entry:
+          editingForm.access_type === 'restricted' && editingForm.prefill_public_id_entry.trim()
+            ? editingForm.prefill_public_id_entry.trim()
+            : null,
       prefill_name_entry:
         editingForm.access_type === 'restricted' && editingForm.prefill_name_entry.trim()
           ? editingForm.prefill_name_entry.trim()
@@ -299,7 +480,7 @@ export default function AdminPanel({
           ? editingForm.prefill_gender_entry.trim()
           : null,
       prefill_parent_email_entry:
-        editingForm.access_type === 'restricted' && editingForm.prefill_parent_email_entry.trim()
+        editingForm.prefill_parent_email_entry.trim()
           ? editingForm.prefill_parent_email_entry.trim()
           : null,
       prefill_school_entry:
@@ -314,6 +495,48 @@ export default function AdminPanel({
         editingForm.access_type === 'restricted' && editingForm.prefill_group_entry.trim()
           ? editingForm.prefill_group_entry.trim()
           : null,
+      google_form_id: editingForm.google_form_id.trim() || null,
+      google_form_watch_enabled: editingForm.google_form_watch_enabled,
+
+      response_public_id_question_id:
+        editingForm.access_type === 'restricted' && editingForm.response_public_id_question_id.trim()
+          ? editingForm.response_public_id_question_id.trim()
+          : null,
+
+      response_name_question_id:
+        editingForm.access_type === 'restricted' && editingForm.response_name_question_id.trim()
+          ? editingForm.response_name_question_id.trim()
+          : null,
+
+      response_dni_question_id:
+        editingForm.access_type === 'restricted' && editingForm.response_dni_question_id.trim()
+          ? editingForm.response_dni_question_id.trim()
+          : null,
+
+      response_gender_question_id:
+        editingForm.access_type === 'restricted' && editingForm.response_gender_question_id.trim()
+          ? editingForm.response_gender_question_id.trim()
+          : null,
+
+      response_parent_email_question_id:
+        editingForm.response_parent_email_question_id.trim()
+          ? editingForm.response_parent_email_question_id.trim()
+          : null,
+
+      response_school_question_id:
+        editingForm.access_type === 'restricted' && editingForm.response_school_question_id.trim()
+          ? editingForm.response_school_question_id.trim()
+          : null,
+
+      response_birth_date_question_id:
+        editingForm.access_type === 'restricted' && editingForm.response_birth_date_question_id.trim()
+          ? editingForm.response_birth_date_question_id.trim()
+          : null,
+
+      response_group_question_id:
+        editingForm.access_type === 'restricted' && editingForm.response_group_question_id.trim()
+          ? editingForm.response_group_question_id.trim()
+          : null,
     };
 
     let formId = editingForm.id;
@@ -326,7 +549,7 @@ export default function AdminPanel({
 
       if (updateError) {
         console.error(updateError);
-        setError('Error al actualizar el formulario.');
+        setFormModalError('Error al actualizar el formulario.');
         setSaving(false);
         return;
       }
@@ -339,7 +562,7 @@ export default function AdminPanel({
 
       if (insertError || !inserted) {
         console.error(insertError);
-        setError('Error al crear el formulario.');
+        setFormModalError('Error al crear el formulario.');
         setSaving(false);
         return;
       }
@@ -354,7 +577,7 @@ export default function AdminPanel({
 
     if (deleteRelationsError) {
       console.error(deleteRelationsError);
-      setError('Error al actualizar los grupos del formulario.');
+      setFormModalError('Error al actualizar los grupos del formulario.');
       setSaving(false);
       return;
     }
@@ -371,7 +594,27 @@ export default function AdminPanel({
 
       if (insertRelationsError) {
         console.error(insertRelationsError);
-        setError('Error al guardar los grupos del formulario.');
+        setFormModalError('Error al guardar los grupos del formulario.');
+        setSaving(false);
+        return;
+      }
+    }
+
+    if (
+      editingForm.google_form_watch_enabled &&
+      editingForm.google_form_id.trim() &&
+      formId
+    ) {
+      try {
+        setSaving(false);
+        await syncGoogleFormWatch(formId);
+      } catch (err) {
+        console.error(err);
+        setFormModalError(
+          err instanceof Error
+            ? err.message
+            : 'El formulario se ha guardado, pero no se ha podido sincronizar el watch de Google Forms.'
+        );
         setSaving(false);
         return;
       }
@@ -465,6 +708,47 @@ export default function AdminPanel({
     );
   });
 
+  const isSaveDisabled = !!editingForm && (
+    !editingForm.title.trim() ||
+    !editingForm.url.trim() ||
+    (editingForm.google_form_watch_enabled && !editingForm.google_form_id.trim()) ||
+    (
+      editingForm.access_type === 'public' &&
+      !editingForm.prefill_parent_email_entry.trim()
+    ) ||
+    (
+      editingForm.access_type === 'public' && editingForm.google_form_watch_enabled &&
+      !editingForm.response_parent_email_question_id.trim()
+    ) ||
+
+    (
+      editingForm.access_type === 'restricted' &&
+      (
+        !editingForm.prefill_public_id_entry.trim() ||
+        !editingForm.prefill_name_entry.trim() ||
+        !editingForm.prefill_dni_entry.trim() ||
+        !editingForm.prefill_gender_entry.trim() ||
+        !editingForm.prefill_parent_email_entry.trim() ||
+        !editingForm.prefill_school_entry.trim() ||
+        !editingForm.prefill_birth_date_entry.trim() ||
+        !editingForm.prefill_group_entry.trim()
+      )
+    ) ||
+    (
+      editingForm.access_type === 'restricted' && editingForm.google_form_watch_enabled &&
+      (
+        !editingForm.response_public_id_question_id.trim() ||
+        !editingForm.response_name_question_id.trim() ||
+        !editingForm.response_dni_question_id.trim() ||
+        !editingForm.response_gender_question_id.trim() ||
+        !editingForm.response_parent_email_question_id.trim() ||
+        !editingForm.response_school_question_id.trim() ||
+        !editingForm.response_birth_date_question_id.trim() ||
+        !editingForm.response_group_question_id.trim()
+      )
+    )
+  );
+
   if (authLoading) {
     return (
       <div className="min-h-[80vh] flex items-center justify-center px-6">
@@ -508,6 +792,10 @@ export default function AdminPanel({
     );
   }
 
+  const compatibleFormsForCopy = editingForm
+    ? getCompatibleFormsForCopy(editingForm)
+    : [];
+
   return (
     <div className="max-w-6xl mx-auto px-6 py-12">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 gap-4">
@@ -516,7 +804,7 @@ export default function AdminPanel({
             Panel de Administración
           </h1>
           <p className="text-slate-500">
-            Gestiona formularios y accesos públicos de los alumnos.
+            Gestiona formularios y accesos públicos de los catecúmenos.
           </p>
         </div>
       </div>
@@ -757,7 +1045,11 @@ export default function AdminPanel({
                 {editingForm.id ? 'Editar Formulario' : 'Nuevo Formulario'}
               </h3>
               <button
-                onClick={() => setEditingForm(null)}
+                onClick={() => {
+                  setEditingForm(null);
+                  setFormModalError(null);
+                  setCopySourceSelectorOpen(false);
+                }}
                 className="text-slate-400 hover:text-slate-600 transition-colors"
               >
                 <XCircle className="w-8 h-8" />
@@ -765,6 +1057,12 @@ export default function AdminPanel({
             </div>
 
             <form onSubmit={saveForm} className="p-8 space-y-6 max-h-[80vh] overflow-y-auto">
+              {formModalError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {formModalError}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="md:col-span-2">
                   <label className="block text-sm font-bold text-slate-700 mb-2">
@@ -791,6 +1089,49 @@ export default function AdminPanel({
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
                   />
                 </div>
+
+                <div className="md:col-span-2">
+                  <label className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editingForm.google_form_watch_enabled}
+                      onChange={(e) => {
+                        setCopySourceSelectorOpen(false);
+                        setEditingForm({
+                          ...editingForm,
+                          google_form_watch_enabled: e.target.checked,
+                        });
+                      }}
+                      className="mt-1 w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div>
+                      <div className="font-bold text-sm text-slate-700">
+                        Activar seguimiento automático de respuestas
+                      </div>
+                      <div className="text-sm text-slate-500">
+                        Si está activado, este formulario quedará incluido en la sincronización de watches de Google Forms y se revisará de forma automática que los datos introducidos por los usuarios son correctos,
+                        además de comprobarse también que ningún usuario externo envía el formulario.
+                      </div>
+                    </div>
+                  </label>
+                </div>
+                {editingForm.google_form_watch_enabled && (
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-bold text-slate-700 mb-2">
+                      ID de EDICIÓN del formulario de Google
+                    </label>
+                    <input
+                      type="text"
+                      value={editingForm.google_form_id}
+                      onChange={(e) => setEditingForm({ ...editingForm, google_form_id: e.target.value })}
+                      placeholder="Ej: 1FAIpQLSe..."
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                    />
+                    <p className="mt-2 text-sm text-slate-500">
+                      Se usará para integrar este formulario con Google Forms API y detectar respuestas enviadas.
+                    </p>
+                  </div>
+                )}
 
                 <div className="md:col-span-2">
                   <label className="block text-sm font-bold text-slate-700 mb-2">
@@ -820,13 +1161,28 @@ export default function AdminPanel({
                         type="radio"
                         name="access_type"
                         checked={editingForm.access_type === 'public'}
-                        onChange={() =>
+                        onChange={() => {
+                          setCopySourceSelectorOpen(false);
                           setEditingForm({
                             ...editingForm,
                             access_type: 'public',
                             group_ids: [],
-                          })
-                        }
+                            prefill_public_id_entry: '',
+                            prefill_name_entry: '',
+                            prefill_dni_entry: '',
+                            prefill_gender_entry: '',
+                            prefill_school_entry: '',
+                            prefill_birth_date_entry: '',
+                            prefill_group_entry: '',
+                            response_public_id_question_id: '',
+                            response_name_question_id: '',
+                            response_dni_question_id: '',
+                            response_gender_question_id: '',
+                            response_school_question_id: '',
+                            response_birth_date_question_id: '',
+                            response_group_question_id: '',
+                          });
+                        }}
                         className="w-5 h-5"
                       />
                       <div>
@@ -848,12 +1204,13 @@ export default function AdminPanel({
                         type="radio"
                         name="access_type"
                         checked={editingForm.access_type === 'restricted'}
-                        onChange={() =>
+                        onChange={() => {
+                          setCopySourceSelectorOpen(false);
                           setEditingForm({
                             ...editingForm,
                             access_type: 'restricted',
                           })
-                        }
+                        }}
                         className="w-5 h-5"
                       />
                       <div>
@@ -888,6 +1245,63 @@ export default function AdminPanel({
                     onChange={(e) => setEditingForm({ ...editingForm, close_date: e.target.value })}
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
                   />
+                </div>
+
+                <div className="md:col-span-2">
+                  <div className="bg-green-50 border border-green-200 rounded-2xl p-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-bold text-green-800">
+                          Reutilizar identificadores desde otro formulario
+                        </div>
+                        <div className="text-sm text-green-600">
+                          Solo se muestran formularios del mismo tipo de acceso
+                          {editingForm.google_form_watch_enabled
+                            ? ' y con seguimiento automático activado'
+                            : ''}.
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setCopySourceSelectorOpen((prev) => !prev)}
+                        className="px-4 py-2 bg-white border border-green-200 rounded-xl text-sm font-semibold text-green-700 hover:bg-green-100 transition-all flex items-center justify-center gap-2"
+                      >
+                        <Copy className="w-4 h-4" />
+                        {editingForm.google_form_watch_enabled
+                          ? 'Copiar identificadores prefill y de seguimiento de otro formulario'
+                          : 'Copiar identificadores prefill de otro formulario'}
+                      </button>
+                    </div>
+
+                    {copySourceSelectorOpen && (
+                      <div className="mt-4 border-t border-slate-200 pt-4">
+                        {compatibleFormsForCopy.length === 0 ? (
+                          <p className="text-sm text-slate-500">
+                            No hay otros formularios compatibles desde los que copiar.
+                          </p>
+                        ) : (
+                          <div className="grid grid-cols-1 gap-2">
+                            {compatibleFormsForCopy.map((form) => (
+                              <button
+                                key={form.id}
+                                type="button"
+                                onClick={() => copyIdentifiersFromForm(form)}
+                                className="w-full text-left px-4 py-3 bg-white border border-slate-200 rounded-xl hover:bg-slate-100 transition-all"
+                              >
+                                <div className="font-semibold text-slate-800">
+                                  {form.title}
+                                </div>
+                                <div className="text-sm text-slate-500 break-all">
+                                  {form.url}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {editingForm.access_type === 'restricted' && (
@@ -932,18 +1346,31 @@ export default function AdminPanel({
                 )}
                 {editingForm.access_type === 'restricted' && (
                   <div className="md:col-span-2">
-                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-4">
-                      <p className="text-sm text-amber-800">
-                        Introduce aquí los identificadores <span className="font-mono font-bold">entry.XXXXXXXXX</span> de Google Forms
-                        únicamente para los campos que quieras prerrellenar.
-                      </p>
-                    </div>
-
                     <label className="block text-sm font-bold text-slate-700 mb-4">
                       Campos de prerrelleno de Google Forms
                     </label>
-
+                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-4">
+                      <p className="text-sm text-amber-800">
+                        Introduce aquí los identificadores <span className="font-mono font-bold">entry.XXXXXXXXX</span> de Google Forms.
+                        En los formularios de acceso limitado, todos estos identificadores son obligatorios para poder validar
+                        correctamente las respuestas recibidas.
+                      </p>
+                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-600 mb-2">
+                          IDENTIFICADOR
+                        </label>
+                        <input
+                          type="text"
+                          value={editingForm.prefill_public_id_entry}
+                          onChange={(e) =>
+                            setEditingForm({ ...editingForm, prefill_public_id_entry: e.target.value })
+                          }
+                          placeholder="entry.123456789"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                        />
+                      </div>
                       <div>
                         <label className="block text-sm font-semibold text-slate-600 mb-2">
                           NOMBRE COMPLETO
@@ -1031,7 +1458,7 @@ export default function AdminPanel({
                         />
                       </div>
 
-                      <div className="md:col-span-2">
+                      <div>
                         <label className="block text-sm font-semibold text-slate-600 mb-2">
                           GRUPO
                         </label>
@@ -1048,24 +1475,225 @@ export default function AdminPanel({
                     </div>
                   </div>
                 )}
+
+{editingForm.access_type === 'restricted' && editingForm.google_form_watch_enabled && (
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-bold text-slate-700 mb-4">
+                      Campos de seguimiento de preguntas
+                    </label>
+                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-4">
+                      <p className="text-sm text-amber-800">
+                        Introduce aquí los identificadores de respuesta que devuelve la API de Google Forms para cada pregunta.
+                        Estos identificadores no tienen formato <span className="font-mono font-bold">entry.XXXXXXXXX</span>,
+                        sino valores como <span className="font-mono font-bold">617c86bb</span>.
+                        Se utilizan para leer y validar las respuestas enviadas.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-600 mb-2">
+                          QUESTION ID DEL IDENTIFICADOR
+                        </label>
+                        <input
+                          type="text"
+                          value={editingForm.response_public_id_question_id}
+                          onChange={(e) =>
+                            setEditingForm({ ...editingForm, response_public_id_question_id: e.target.value })
+                          }
+                          placeholder="012ad74c"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-600 mb-2">
+                          QUESTION ID DEL NOMBRE COMPLETO
+                        </label>
+                        <input
+                          type="text"
+                          value={editingForm.response_name_question_id}
+                          onChange={(e) =>
+                            setEditingForm({ ...editingForm, response_name_question_id: e.target.value })
+                          }
+                          placeholder="012ad74c"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-600 mb-2">
+                          QUESTION ID DEL DNI
+                        </label>
+                        <input
+                          type="text"
+                          value={editingForm.response_dni_question_id}
+                          onChange={(e) =>
+                            setEditingForm({ ...editingForm, response_dni_question_id: e.target.value })
+                          }
+                          placeholder="012ad74c"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-600 mb-2">
+                          QUESTION ID DEL GÉNERO
+                        </label>
+                        <input
+                          type="text"
+                          value={editingForm.response_gender_question_id}
+                          onChange={(e) =>
+                            setEditingForm({ ...editingForm, response_gender_question_id: e.target.value })
+                          }
+                          placeholder="012ad74c"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-600 mb-2">
+                          QUESTION ID DEL EMAIL DE CONTACTO
+                        </label>
+                        <input
+                          type="text"
+                          value={editingForm.response_parent_email_question_id}
+                          onChange={(e) =>
+                            setEditingForm({ ...editingForm, response_parent_email_question_id: e.target.value })
+                          }
+                          placeholder="012ad74c"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-600 mb-2">
+                          QUESTION ID DEL COLEGIO
+                        </label>
+                        <input
+                          type="text"
+                          value={editingForm.response_school_question_id}
+                          onChange={(e) =>
+                            setEditingForm({ ...editingForm, response_school_question_id: e.target.value })
+                          }
+                          placeholder="012ad74c"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-600 mb-2">
+                          QUESTION ID DEL FECHA DE NACIMIENTO
+                        </label>
+                        <input
+                          type="text"
+                          value={editingForm.response_birth_date_question_id}
+                          onChange={(e) =>
+                            setEditingForm({ ...editingForm, response_birth_date_question_id: e.target.value })
+                          }
+                          placeholder="012ad74c"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-600 mb-2">
+                          QUESTION ID DEL GRUPO
+                        </label>
+                        <input
+                          type="text"
+                          value={editingForm.response_group_question_id}
+                          onChange={(e) =>
+                            setEditingForm({ ...editingForm, response_group_question_id: e.target.value })
+                          }
+                          placeholder="012ad74c"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {editingForm.access_type === 'public' && (
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-bold text-slate-700 mb-4">
+                      Campos de prerrelleno para acceso libre
+                    </label>
+                    <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 mb-4">
+                      <p className="text-sm text-blue-800">
+                        Introduce aquí el identificador <span className="font-mono font-bold">entry.XXXXXXXXX</span> del campo
+                        <span className="font-semibold"> EMAIL DE CONTACTO</span> de Google Forms.
+                        Este identificador es obligatorio para poder validar las respuestas del formulario.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-600 mb-2">
+                        EMAIL DE CONTACTO
+                      </label>
+                      <input
+                        type="text"
+                        value={editingForm.prefill_parent_email_entry}
+                        onChange={(e) =>
+                          setEditingForm({ ...editingForm, prefill_parent_email_entry: e.target.value })
+                        }
+                        placeholder="entry.123456789"
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                      />
+                    </div>
+                  </div>
+                )}
+                {editingForm.access_type === 'public' && editingForm.google_form_watch_enabled && (
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-bold text-slate-700 mb-4">
+                      Campos de seguimiento de preguntas para acceso libre
+                    </label>
+                    <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 mb-4">
+                      <p className="text-sm text-blue-800">
+                        Introduce aquí el identificador de la pregunta
+                        <span className="font-semibold"> EMAIL DE CONTACTO</span> de Google Forms.
+                        Este identificador es obligatorio para poder hacer un seguimiento de las respuestas del formulario.
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-600 mb-2">
+                        QUESTION ID DEL EMAIL DE CONTACTO
+                      </label>
+                      <input
+                        type="text"
+                        value={editingForm.response_parent_email_question_id}
+                        onChange={(e) =>
+                          setEditingForm({ ...editingForm, response_parent_email_question_id: e.target.value })
+                        }
+                        placeholder="617c86bb"
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end gap-3 pt-4">
                 <button
                   type="button"
-                  onClick={() => setEditingForm(null)}
+                  onClick={() => {
+                    setEditingForm(null);
+                    setFormModalError(null);
+                    setCopySourceSelectorOpen(false);
+                  }}
                   className="px-6 py-3 text-slate-600 font-bold hover:bg-slate-100 rounded-xl transition-all"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  disabled={saving}
-                  className="px-8 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-60"
+                  disabled={saving || syncingWatch || isSaveDisabled}
+                  className="px-8 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  {saving ? 'Guardando...' : 'Guardar Formulario'}
+                  {syncingWatch ? 'Sincronizando watch...' : saving ? 'Guardando...' : 'Guardar Formulario'}
                 </button>
               </div>
+
+              {isSaveDisabled && (
+                <p className="text-sm text-amber-700">
+                  Completa todos los campos obligatorios antes de guardar.
+                </p>
+              )}
             </form>
           </motion.div>
         </div>

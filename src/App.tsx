@@ -12,6 +12,8 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import Login from './components/Login';
 import AdminPanel from './components/AdminPanel';
 import HomePage from './components/HomePage';
+import VerifyParentEmailPage from './components/VerifyParentEmailPage';
+import VerifyPublicFormEmailPage from './components/VerifyPublicFormEmailPage';
 
 import AppLayout from './layout/AppLayout';
 
@@ -132,6 +134,8 @@ export default function App() {
         <AppLayout user={authUser} onLogout={handleLogout}>
           <Routes>
             <Route path="/" element={<HomePage />} />
+            <Route path="/verify-parent-email" element={<VerifyParentEmailPage />} />
+            <Route path="/verify-public-form-email" element={<VerifyPublicFormEmailPage />} />
             <Route
               path="/admin"
               element={

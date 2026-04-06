@@ -6,8 +6,23 @@ import { es } from 'date-fns/locale';
 import type { PublicHomeForm } from '../types';
 import { isFormCurrentlyOpen } from '../types';
 
-export default function FormCard({ form }: { form: PublicHomeForm }) {
+type FormCardProps = {
+  form: PublicHomeForm;
+  onAccessClick?: (form: PublicHomeForm) => void;
+};
+
+export default function FormCard({ form, onAccessClick }: FormCardProps) {
   const isOpen = isFormCurrentlyOpen(form);
+
+  const handleClick = () => {
+    if (onAccessClick) {
+      onAccessClick(form);
+      return;
+    }
+
+    window.open(form.url, '_blank', 'noopener,noreferrer');
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -49,16 +64,16 @@ export default function FormCard({ form }: { form: PublicHomeForm }) {
       </div>
 
       {isOpen && (
-        <a
-          href={form.url}
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          type="button"
+          onClick={handleClick}
           className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all shadow-indigo-100 shadow-lg group-hover:-translate-y-0.5"
         >
           Acceder al Formulario
           <ExternalLink className="w-4 h-4" />
-        </a>
+        </button>
       )}
+
       {!isOpen && (
         <div className="text-sm text-slate-500 font-medium">
           Disponible próximamente

@@ -393,3 +393,146 @@ entrypoint = "./functions/get-registration-forms-by-public-id/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/get-registration-forms-by-public-id/*.html" ]
+
+[functions.send-parent-verification-email]
+enabled = true
+verify_jwt = false
+import_map = "./functions/send-parent-verification-email/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/send-parent-verification-email/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/send-parent-verification-email/*.html" ]
+
+[functions.verify-parent-email-token]
+enabled = true
+verify_jwt = false
+import_map = "./functions/verify-parent-email-token/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/verify-parent-email-token/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/verify-parent-email-token/*.html" ]
+
+[functions.start-public-form-email-access]
+enabled = true
+verify_jwt = false
+import_map = "./functions/start-public-form-email-access/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/start-public-form-email-access/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/start-public-form-email-access/*.html" ]
+
+[functions.verify-public-form-email-token]
+enabled = true
+verify_jwt = false
+import_map = "./functions/verify-public-form-email-token/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/verify-public-form-email-token/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/verify-public-form-email-token/*.html" ]
+
+[functions.send-public-form-verification-email]
+enabled = true
+verify_jwt = false
+import_map = "./functions/send-public-form-verification-email/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/send-public-form-verification-email/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/send-public-form-verification-email/*.html" ]
+
+[functions.google-forms-watch-sync]
+enabled = true
+verify_jwt = false
+import_map = "./functions/google-forms-watch-sync/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/google-forms-watch-sync/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/google-forms-watch-sync/*.html" ]
+
+[functions.google-oauth-start]
+enabled = true
+verify_jwt = false
+import_map = "./functions/google-oauth-start/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/google-oauth-start/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/google-oauth-start/*.html" ]
+
+[functions.google-oauth-callback]
+enabled = true
+verify_jwt = false
+import_map = "./functions/google-oauth-callback/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/google-oauth-callback/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/google-oauth-callback/*.html" ]
+
+[functions.google-forms-pubsub-webhook]
+enabled = true
+verify_jwt = false
+import_map = "./functions/google-forms-pubsub-webhook/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/google-forms-pubsub-webhook/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/google-forms-pubsub-webhook/*.html" ]
+
+[functions.google-forms-sync-responses]
+enabled = true
+verify_jwt = false
+import_map = "./functions/google-forms-sync-responses/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/google-forms-sync-responses/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/google-forms-sync-responses/*.html" ]
+
+[functions.google-forms-process-responses]
+enabled = true
+verify_jwt = false
+import_map = "./functions/google-forms-process-responses/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/google-forms-process-responses/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/google-forms-process-responses/*.html" ]
+
+[functions.send-form-policy-email]
+enabled = true
+verify_jwt = false
+import_map = "./functions/send-form-policy-email/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/send-form-policy-email/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/send-form-policy-email/*.html" ]
+
+[functions.google-forms-delete-queue]
+enabled = true
+verify_jwt = false
+import_map = "./functions/google-forms-delete-queue/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/google-forms-delete-queue/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/google-forms-delete-queue/*.html" ]

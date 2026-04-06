@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { Lock, AlertCircle } from 'lucide-react';
+import { X, Mail, Lock, AlertCircle } from 'lucide-react';
 
 import { supabase } from '../lib/supabaseClient';
 import { isFormCurrentlyOpen } from '../types';
 import FormCard from './FormCard';
 
-import type { PublicHomeForm, PublicFormsResponse } from '../types';
+import type { PublicHomeForm, PublicFormsResponse, StartPublicFormEmailAccessResponse } from '../types';
 
 export default function HomePage() {
   const [publicId, setPublicId] = useState('');
@@ -15,6 +16,94 @@ export default function HomePage() {
   const [loadingPublic, setLoadingPublic] = useState(true);
   const [checkingAccess, setCheckingAccess] = useState(false);
   const [error, setError] = useState('');
+  const [infoMessage, setInfoMessage] = useState('');
+  const [searchParams] = useSearchParams();
+  const [selectedPublicForm, setSelectedPublicForm] = useState<PublicHomeForm | null>(null);
+  const [publicFormEmail, setPublicFormEmail] = useState('');
+  const [publicFormEmailError, setPublicFormEmailError] = useState('');
+  const [publicFormEmailInfo, setPublicFormEmailInfo] = useState('');
+  const [submittingPublicFormEmail, setSubmittingPublicFormEmail] = useState(false);
+
+  const openPublicFormAccessModal = (form: PublicHomeForm) => {
+    setSelectedPublicForm(form);
+    setPublicFormEmail('');
+    setPublicFormEmailError('');
+    setPublicFormEmailInfo('');
+  };
+
+  const closePublicFormAccessModal = () => {
+    setSelectedPublicForm(null);
+    setPublicFormEmail('');
+    setPublicFormEmailError('');
+    setPublicFormEmailInfo('');
+    setSubmittingPublicFormEmail(false);
+  };
+
+  const handleSubmitPublicFormEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!selectedPublicForm) return;
+
+    const cleanEmail = publicFormEmail.trim().toLowerCase();
+
+    if (!cleanEmail) {
+      setPublicFormEmailError('Debes introducir un correo electrónico.');
+      setPublicFormEmailInfo('');
+      return;
+    }
+
+    setSubmittingPublicFormEmail(true);
+    setPublicFormEmailError('');
+    setPublicFormEmailInfo('');
+
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/start-public-form-email-access`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+          },
+          body: JSON.stringify({
+            form_id: selectedPublicForm.id,
+            email: cleanEmail,
+          }),
+        }
+      );
+
+      const result: StartPublicFormEmailAccessResponse = await response.json();
+
+      if (!response.ok || !result.ok) {
+        setPublicFormEmailError(
+          result.message ?? 'No se pudo procesar el acceso al formulario.'
+        );
+        setSubmittingPublicFormEmail(false);
+        return;
+      }
+
+      if (result.status === 'verified' && result.access_url) {
+        window.location.href = result.access_url;
+        return;
+      }
+
+      if (result.status === 'verification_required') {
+        setPublicFormEmailInfo(
+          result.message ??
+            'Te hemos enviado un correo de verificación. Revisa tu bandeja de entrada.'
+        );
+        setSubmittingPublicFormEmail(false);
+        return;
+      }
+
+      setPublicFormEmailError('No se pudo procesar el acceso al formulario.');
+      setSubmittingPublicFormEmail(false);
+    } catch (error) {
+      console.error(error);
+      setPublicFormEmailError('Ha ocurrido un error al procesar el acceso.');
+      setSubmittingPublicFormEmail(false);
+    }
+  };
 
   const isFormClosed = (form: PublicHomeForm) => {
     if (!form.close_date) return false;
@@ -52,6 +141,7 @@ export default function HomePage() {
         url: form.url,
         open_date: form.open_date,
         close_date: form.close_date,
+        access_type: form.access_type,
       }));
 
     setPublicForms(normalized);
@@ -62,19 +152,32 @@ export default function HomePage() {
     loadPublicForms();
   }, []);
 
-  const handleCheckAccess = async (e: React.FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    const paramPublicId = (searchParams.get('public_id') ?? '').trim().toUpperCase();
+    const autoCheck = searchParams.get('auto_check') === '1';
 
-    const cleanPublicId = publicId.trim().toUpperCase();
+    if (!paramPublicId) return;
+
+    setPublicId(paramPublicId);
+
+    if (autoCheck) {
+      checkAccessByPublicId(paramPublicId);
+    }
+  }, [searchParams]);
+
+  const checkAccessByPublicId = async (rawPublicId: string) => {
+    const cleanPublicId = rawPublicId.trim().toUpperCase();
 
     if (!cleanPublicId) {
       setRestrictedForms([]);
       setError('');
+      setInfoMessage('');
       return;
     }
 
     setCheckingAccess(true);
     setError('');
+    setInfoMessage('');
 
     try {
       const response = await fetch(
@@ -99,6 +202,23 @@ export default function HomePage() {
         return;
       }
 
+      if (result.status === 'verification_required') {
+        setRestrictedForms([]);
+        setInfoMessage(
+          result.message ??
+            'Te hemos enviado un correo de verificación. Revisa tu bandeja de entrada.'
+        );
+        setCheckingAccess(false);
+        return;
+      }
+
+      if (result.status === 'not_found') {
+        setRestrictedForms([]);
+        setError('No se ha encontrado ningún acceso asociado a ese identificador.');
+        setCheckingAccess(false);
+        return;
+      }
+
       const normalizedRestricted = (result.forms ?? []).filter(
         (form) => !isFormClosed(form)
       );
@@ -111,6 +231,11 @@ export default function HomePage() {
       setRestrictedForms([]);
       setCheckingAccess(false);
     }
+  };
+
+  const handleCheckAccess = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await checkAccessByPublicId(publicId);
   };
 
   const mergedForms = [...publicForms, ...restrictedForms].filter(
@@ -185,6 +310,16 @@ export default function HomePage() {
             <span className="text-sm font-medium">{error}</span>
           </motion.div>
         )}
+
+        {infoMessage && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-4 text-blue-700 bg-blue-50 p-3 rounded-xl border border-blue-100"
+          >
+            <span className="text-sm font-medium">{infoMessage}</span>
+          </motion.div>
+        )}
       </div>
 
       {loadingPublic ? (
@@ -202,7 +337,11 @@ export default function HomePage() {
               className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8"
             >
               {availableNowForms.map((form) => (
-                <FormCard key={form.id} form={form} />
+                <FormCard
+                    key={form.id}
+                    form={form}
+                    onAccessClick={form.access_type === 'public' ? openPublicFormAccessModal : undefined}
+                  />
               ))}
             </motion.div>
           ) : upcomingForms.length === 0 ? (
@@ -239,12 +378,85 @@ export default function HomePage() {
                 className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8"
               >
                 {upcomingForms.map((form) => (
-                  <FormCard key={form.id} form={form} />
+                  <FormCard
+                    key={form.id}
+                    form={form}
+                    onAccessClick={form.access_type === 'public' ? openPublicFormAccessModal : undefined}
+                  />
                 ))}
               </motion.div>
             </div>
           )}
         </>
+      )}
+      {selectedPublicForm && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, y: 18, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-200 p-6 relative"
+          >
+            <button
+              type="button"
+              onClick={closePublicFormAccessModal}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="mb-6 pr-8">
+              <h2 className="text-2xl font-bold text-slate-900 mb-2">
+                Verificación de acceso
+              </h2>
+              <p className="text-slate-600 text-sm">
+                Introduce tu correo electrónico de contacto para acceder al formulario:
+              </p>
+              <p className="text-sm font-semibold text-slate-800 mt-2">
+                {selectedPublicForm.title}
+              </p>
+            </div>
+
+            <form onSubmit={handleSubmitPublicFormEmail} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Correo electrónico
+                </label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="email"
+                    value={publicFormEmail}
+                    onChange={(e) => setPublicFormEmail(e.target.value)}
+                    placeholder="correo@ejemplo.com"
+                    className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              {publicFormEmailError && (
+                <div className="flex items-start gap-2 text-red-600 bg-red-50 p-3 rounded-xl border border-red-100">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span className="text-sm font-medium">{publicFormEmailError}</span>
+                </div>
+              )}
+
+              {publicFormEmailInfo && (
+                <div className="text-blue-700 bg-blue-50 p-3 rounded-xl border border-blue-100">
+                  <span className="text-sm font-medium">{publicFormEmailInfo}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={submittingPublicFormEmail}
+                className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {submittingPublicFormEmail ? 'Comprobando...' : 'Continuar'}
+              </button>
+            </form>
+          </motion.div>
+        </div>
       )}
     </div>
   );
