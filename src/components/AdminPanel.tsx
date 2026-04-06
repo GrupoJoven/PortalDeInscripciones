@@ -53,6 +53,7 @@ export default function AdminPanel({
   const [accessRows, setAccessRows] = useState<StudentAccessRow[]>([]);
   const [loadingAccess, setLoadingAccess] = useState(true);
   const [accessSearch, setAccessSearch] = useState('');
+  const [selectedAccessGroupId, setSelectedAccessGroupId] = useState<'all' | string>('all');
   const [regeneratingStudentId, setRegeneratingStudentId] = useState<string | null>(null);
 
   const [saving, setSaving] = useState(false);
@@ -695,6 +696,11 @@ export default function AdminPanel({
   };
 
   const filteredAccessRows = accessRows.filter((row) => {
+    const matchesGroup =
+      selectedAccessGroupId === 'all' || row.group_id === selectedAccessGroupId;
+
+    if (!matchesGroup) return false;
+
     const term = normalizeSearchText(accessSearch);
     if (!term) return true;
 
@@ -703,7 +709,6 @@ export default function AdminPanel({
       normalizeSearchText(row.email).includes(term) ||
       normalizeSearchText(row.parent_email).includes(term) ||
       normalizeSearchText(row.school).includes(term) ||
-      normalizeSearchText(row.group_name).includes(term) ||
       normalizeSearchText(row.public_id).includes(term)
     );
   });
@@ -944,17 +949,40 @@ export default function AdminPanel({
       {activeTab === 'access' && (
         <>
           <div className="bg-white border border-slate-200 rounded-3xl p-5 mb-6">
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                <Search className="w-5 h-5 text-slate-400" />
+            <div className="flex flex-col lg:flex-row gap-4 lg:items-center">
+              <div className="relative flex-1 min-w-0">
+                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                  <Search className="w-5 h-5 text-slate-400" />
+                </div>
+                <input
+                  type="text"
+                  value={accessSearch}
+                  onChange={(e) => setAccessSearch(e.target.value)}
+                  placeholder="Buscar por nombre, email, email del padre, colegio o identificador."
+                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
+                />
               </div>
-              <input
-                type="text"
-                value={accessSearch}
-                onChange={(e) => setAccessSearch(e.target.value)}
-                placeholder="Buscar por nombre, email, email del padre, colegio, grupo o identificador..."
-                className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
-              />
+
+              <div className="lg:w-[320px] shrink-0">
+                <div className="flex items-center gap-3 px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus-within:ring-4 focus-within:ring-indigo-100 focus-within:border-indigo-500 transition-all">
+                  <span className="text-sm font-semibold text-slate-600 whitespace-nowrap">
+                    Grupo
+                  </span>
+
+                  <select
+                    value={selectedAccessGroupId}
+                    onChange={(e) => setSelectedAccessGroupId(e.target.value)}
+                    className="w-full bg-transparent text-slate-700 outline-none border-0 pr-8"
+                  >
+                    <option value="all">Todos los grupos</option>
+                    {groups.map((group) => (
+                      <option key={group.id} value={group.id}>
+                        {group.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
             </div>
           </div>
 
