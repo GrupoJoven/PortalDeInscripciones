@@ -68,7 +68,9 @@ export default function AdminPanel({
   '1688ad22-3c20-4474-97d1-8e65b7cd2c5b',
   '53352ca6-2dc6-45d0-9f07-cc3d170e5736',
   '5d0b4e27-ba69-416c-af3f-7a29c72219d2',
-  'c1c11f45-99b0-4d0d-95bc-02b2c6192437'
+  'c1c11f45-99b0-4d0d-95bc-02b2c6192437',
+  '147418ab-9758-4062-8aca-714d65aef2a7',
+  '5ce1a334-29b8-46e5-b5c9-3a233ea65309',
 ];
 
 
