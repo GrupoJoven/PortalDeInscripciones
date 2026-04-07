@@ -64,6 +64,13 @@ export default function AdminPanel({
   const [syncingWatch, setSyncingWatch] = useState(false);
   const [copySourceSelectorOpen, setCopySourceSelectorOpen] = useState(false);
 
+  const blockedFormIds = [
+  '1688ad22-3c20-4474-97d1-8e65b7cd2c5b',
+  '53352ca6-2dc6-45d0-9f07-cc3d170e5736',
+  '5d0b4e27-ba69-416c-af3f-7a29c72219d2',
+  'c1c11f45-99b0-4d0d-95bc-02b2c6192437'
+];
+
 
   const loadFormsData = async () => {
     setLoadingForms(true);
@@ -302,7 +309,13 @@ export default function AdminPanel({
 
   const getCompatibleFormsForCopy = (currentForm: EditingForm) => {
     return forms.filter((form) => {
+      // Verificar si el formulario está en la lista de formularios bloqueados
+      if (!blockedFormIds.includes(form.id)) return false;
+
+      // Asegurarse de que el formulario tiene el mismo tipo de acceso
       if (form.access_type !== currentForm.access_type) return false;
+
+      // Asegurarse de que no se copie el formulario actual
       if (currentForm.id && form.id === currentForm.id) return false;
 
       if (currentForm.google_form_watch_enabled && !form.google_form_watch_enabled) {
@@ -911,33 +924,40 @@ export default function AdminPanel({
                   </div>
 
                   <div className="flex items-center gap-3 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
-                    <button
-                      onClick={() => toggleFormActive(form)}
-                      className={`p-2 rounded-xl transition-all ${
-                        form.active
-                          ? 'bg-green-50 text-green-600 hover:bg-green-100'
-                          : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
-                      }`}
-                      title={form.active ? 'Desactivar' : 'Activar'}
-                    >
-                      {form.active ? <Power className="w-5 h-5" /> : <PowerOff className="w-5 h-5" />}
-                    </button>
+                    {/* Verificar si el formulario está bloqueado */}
+                    {blockedFormIds.includes(form.id) ? (
+                      <p className="text-red-500 font-semibold">Este formulario está bloqueado para edición y eliminación.</p>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => toggleFormActive(form)}
+                          className={`p-2 rounded-xl transition-all ${
+                            form.active
+                              ? 'bg-green-50 text-green-600 hover:bg-green-100'
+                              : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
+                          }`}
+                          title={form.active ? 'Desactivar' : 'Activar'}
+                        >
+                          {form.active ? <Power className="w-5 h-5" /> : <PowerOff className="w-5 h-5" />}
+                        </button>
 
-                    <button
-                      onClick={() => openEditForm(form)}
-                      className="p-2 bg-slate-50 text-slate-600 rounded-xl hover:bg-slate-100 transition-all"
-                      title="Editar"
-                    >
-                      <Settings className="w-5 h-5" />
-                    </button>
+                        <button
+                          onClick={() => openEditForm(form)}
+                          className="p-2 bg-slate-50 text-slate-600 rounded-xl hover:bg-slate-100 transition-all"
+                          title="Editar"
+                        >
+                          <Settings className="w-5 h-5" />
+                        </button>
 
-                    <button
-                      onClick={() => deleteForm(form.id)}
-                      className="p-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-all"
-                      title="Eliminar"
-                    >
-                      <Trash2 className="w-5 h-5" />
-                    </button>
+                        <button
+                          onClick={() => deleteForm(form.id)}
+                          className="p-2 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-all"
+                          title="Eliminar"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               ))}
@@ -1275,62 +1295,64 @@ export default function AdminPanel({
                   />
                 </div>
 
-                <div className="md:col-span-2">
-                  <div className="bg-green-50 border border-green-200 rounded-2xl p-4">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                      <div>
-                        <div className="text-sm font-bold text-green-800">
-                          Reutilizar identificadores desde otro formulario
-                        </div>
-                        <div className="text-sm text-green-600">
-                          Solo se muestran formularios del mismo tipo de acceso
-                          {editingForm.google_form_watch_enabled
-                            ? ' y con seguimiento automático activado'
-                            : ''}.
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => setCopySourceSelectorOpen((prev) => !prev)}
-                        className="px-4 py-2 bg-white border border-green-200 rounded-xl text-sm font-semibold text-green-700 hover:bg-green-100 transition-all flex items-center justify-center gap-2"
-                      >
-                        <Copy className="w-4 h-4" />
-                        {editingForm.google_form_watch_enabled
-                          ? 'Copiar identificadores prefill y de seguimiento de otro formulario'
-                          : 'Copiar identificadores prefill de otro formulario'}
-                      </button>
-                    </div>
-
-                    {copySourceSelectorOpen && (
-                      <div className="mt-4 border-t border-slate-200 pt-4">
-                        {compatibleFormsForCopy.length === 0 ? (
-                          <p className="text-sm text-slate-500">
-                            No hay otros formularios compatibles desde los que copiar.
-                          </p>
-                        ) : (
-                          <div className="grid grid-cols-1 gap-2">
-                            {compatibleFormsForCopy.map((form) => (
-                              <button
-                                key={form.id}
-                                type="button"
-                                onClick={() => copyIdentifiersFromForm(form)}
-                                className="w-full text-left px-4 py-3 bg-white border border-slate-200 rounded-xl hover:bg-slate-100 transition-all"
-                              >
-                                <div className="font-semibold text-slate-800">
-                                  {form.title}
-                                </div>
-                                <div className="text-sm text-slate-500 break-all">
-                                  {form.url}
-                                </div>
-                              </button>
-                            ))}
+                {editingForm && (
+                  <div className="md:col-span-2">
+                    <div className="bg-green-50 border border-green-200 rounded-2xl p-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-bold text-green-800">
+                            Reutilizar identificadores desde otro formulario
                           </div>
-                        )}
+                          <div className="text-sm text-green-600">
+                            Solo se muestran plantillas de formularios del mismo tipo de acceso
+                            {editingForm.google_form_watch_enabled
+                              ? ' y con seguimiento automático activado'
+                              : ''}.
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setCopySourceSelectorOpen((prev) => !prev)}
+                          className="px-4 py-2 bg-white border border-green-200 rounded-xl text-sm font-semibold text-green-700 hover:bg-green-100 transition-all flex items-center justify-center gap-2"
+                        >
+                          <Copy className="w-4 h-4" />
+                          {editingForm.google_form_watch_enabled
+                            ? 'Copiar identificadores prefill y de seguimiento de otro formulario'
+                            : 'Copiar identificadores prefill de otro formulario'}
+                        </button>
                       </div>
-                    )}
+
+                      {copySourceSelectorOpen && (
+                        <div className="mt-4 border-t border-slate-200 pt-4">
+                          {compatibleFormsForCopy.length === 0 ? (
+                            <p className="text-sm text-slate-500">
+                              No hay otros formularios compatibles desde los que copiar.
+                            </p>
+                          ) : (
+                            <div className="grid grid-cols-1 gap-2">
+                              {compatibleFormsForCopy.map((form) => (
+                                <button
+                                  key={form.id}
+                                  type="button"
+                                  onClick={() => copyIdentifiersFromForm(form)}
+                                  className="w-full text-left px-4 py-3 bg-white border border-slate-200 rounded-xl hover:bg-slate-100 transition-all"
+                                >
+                                  <div className="font-semibold text-slate-800">
+                                    {form.title}
+                                  </div>
+                                  <div className="text-sm text-slate-500 break-all">
+                                    {form.url}
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {editingForm.access_type === 'restricted' && (
                   <div className="md:col-span-2">
