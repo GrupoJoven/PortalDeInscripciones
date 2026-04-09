@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { ExternalLink, Calendar } from 'lucide-react';
+import { ExternalLink, Calendar, FileText, ShieldCheck } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -19,6 +19,16 @@ export default function FormCard({ form, onAccessClick }: FormCardProps) {
       onAccessClick(form);
       return;
     }
+
+  const handleCircularClick = () => {
+    if (!form.circular_url) return;
+    window.open(form.circular_url, '_blank', 'noopener,noreferrer');
+  };
+
+  const handleAuthorizationClick = () => {
+    if (!form.authorization_url) return;
+    window.open(form.authorization_url, '_blank', 'noopener,noreferrer');
+  };
 
     window.open(form.url, '_blank', 'noopener,noreferrer');
   };
@@ -62,16 +72,43 @@ export default function FormCard({ form, onAccessClick }: FormCardProps) {
           </div>
         )}
       </div>
-
       {isOpen && (
-        <button
-          type="button"
-          onClick={handleClick}
-          className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all shadow-indigo-100 shadow-lg group-hover:-translate-y-0.5"
-        >
-          Acceder al Formulario
-          <ExternalLink className="w-4 h-4" />
-        </button>
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={handleClick}
+            className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all shadow-indigo-100 shadow-lg group-hover:-translate-y-0.5"
+          >
+            Acceder al Formulario
+            <ExternalLink className="w-4 h-4" />
+          </button>
+
+          {(form.circular_url || form.authorization_url) && (
+            <div className="grid grid-cols-1 gap-3">
+              {form.circular_url && (
+                <button
+                  type="button"
+                  onClick={handleCircularClick}
+                  className="w-full bg-slate-100 text-slate-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200 transition-all"
+                >
+                  Acceder a circular
+                  <FileText className="w-4 h-4" />
+                </button>
+              )}
+
+              {form.authorization_url && (
+                <button
+                  type="button"
+                  onClick={handleAuthorizationClick}
+                  className="w-full bg-slate-100 text-slate-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200 transition-all"
+                >
+                  Acceder a autorización
+                  <ShieldCheck className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {!isOpen && (

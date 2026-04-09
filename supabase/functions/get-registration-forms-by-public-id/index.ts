@@ -11,6 +11,8 @@ type RestrictedForm = {
   title: string;
   description: string | null;
   url: string;
+  circular_url: string | null;
+  authorization_url: string | null;
   open_date: string | null;
   close_date: string | null;
   access_type: "restricted";
@@ -192,6 +194,8 @@ async function getRestrictedFormsForStudent(
       title,
       description,
       url,
+      circular_url,
+      authorization_url,
       active,
       access_type,
       open_date,
@@ -248,6 +252,8 @@ async function getRestrictedFormsForStudent(
         [form.prefill_birth_date_entry]: formatBirthDate(studentRow.birth_date),
         [form.prefill_group_entry]: groupName,
       }),
+      circular_url: form.circular_url,
+      authorization_url: form.authorization_url,
       open_date: form.open_date,
       close_date: form.close_date,
       access_type: "restricted",

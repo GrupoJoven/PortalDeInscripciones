@@ -3,6 +3,8 @@ export interface RegistrationForm {
   title: string;
   description: string | null;
   url: string;
+  circular_url: string | null;
+  authorization_url: string | null;
   active: boolean;
   access_type: 'public' | 'restricted';
   open_date: string | null;
@@ -34,6 +36,8 @@ export interface EditingForm {
   title: string;
   description: string;
   url: string;
+  circular_url: string;
+  authorization_url: string;
   active: boolean;
   access_type: 'public' | 'restricted';
   open_date: string;
@@ -83,6 +87,8 @@ export interface PublicHomeForm {
   title: string;
   description: string | null;
   url: string;
+  circular_url: string | null;
+  authorization_url: string | null;
   open_date: string | null;
   close_date: string | null;
   access_type: 'public' | 'restricted';

@@ -120,7 +120,7 @@ export default function HomePage() {
 
     const { data, error } = await supabase
       .from('registration_forms')
-      .select('id, title, description, url, active, open_date, close_date, access_type')
+      .select('id, title, description, url, circular_url, authorization_url, active, open_date, close_date, access_type')
       .eq('access_type', 'public')
       .eq('active', true)
       .order('created_at', { ascending: false });
@@ -139,6 +139,8 @@ export default function HomePage() {
         title: form.title,
         description: form.description,
         url: form.url,
+        circular_url: form.circular_url,
+        authorization_url: form.authorization_url,
         open_date: form.open_date,
         close_date: form.close_date,
         access_type: form.access_type,

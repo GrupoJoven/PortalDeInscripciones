@@ -207,6 +207,8 @@ export default function AdminPanel({
       title: '',
       description: '',
       url: '',
+      circular_url: '',
+      authorization_url: '',
       active: true,
       access_type: 'restricted',
       open_date: '',
@@ -255,6 +257,8 @@ export default function AdminPanel({
       title: form.title,
       description: form.description ?? '',
       url: form.url,
+      circular_url: form.circular_url ?? '',
+      authorization_url: form.authorization_url ?? '',
       active: form.active,
       access_type: form.access_type,
       open_date: toDatetimeLocalValue(form.open_date),
@@ -475,6 +479,8 @@ export default function AdminPanel({
       title: editingForm.title.trim(),
       description: editingForm.description.trim() || null,
       url: editingForm.url.trim(),
+      circular_url: editingForm.circular_url.trim() || null,
+      authorization_url: editingForm.authorization_url.trim() || null,
       active: editingForm.active,
       access_type: editingForm.access_type,
       open_date: fromDatetimeLocalValue(editingForm.open_date),
@@ -1136,6 +1142,36 @@ export default function AdminPanel({
                     type="url"
                     value={editingForm.url}
                     onChange={(e) => setEditingForm({ ...editingForm, url: e.target.value })}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">
+                    Enlace a circular
+                  </label>
+                  <input
+                    type="url"
+                    value={editingForm.circular_url}
+                    onChange={(e) =>
+                      setEditingForm({ ...editingForm, circular_url: e.target.value })
+                    }
+                    placeholder="https://..."
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">
+                    Enlace a autorización
+                  </label>
+                  <input
+                    type="url"
+                    value={editingForm.authorization_url}
+                    onChange={(e) =>
+                      setEditingForm({ ...editingForm, authorization_url: e.target.value })
+                    }
+                    placeholder="https://..."
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
                   />
                 </div>
