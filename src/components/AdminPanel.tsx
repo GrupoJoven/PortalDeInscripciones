@@ -202,6 +202,131 @@ export default function AdminPanel({
     }
   }, [user, isCoordinator]);
 
+  const parseGoogleFormRespondentUrl = (rawUrl: string) => {
+    const trimmed = rawUrl.trim();
+
+    if (!trimmed) {
+      return {
+        isValid: false,
+        normalizedUrl: '',
+        error: 'La URL de encuestado del formulario de Google es obligatoria.',
+      };
+    }
+
+    let parsedUrl: URL;
+
+    try {
+      parsedUrl = new URL(trimmed);
+    } catch {
+      return {
+        isValid: false,
+        normalizedUrl: '',
+        error: 'La URL de encuestado del formulario de Google no es válida.',
+      };
+    }
+
+    if (parsedUrl.protocol !== 'https:') {
+      return {
+        isValid: false,
+        normalizedUrl: '',
+        error: 'La URL de encuestado debe usar https.',
+      };
+    }
+
+    if (parsedUrl.hostname !== 'docs.google.com') {
+      return {
+        isValid: false,
+        normalizedUrl: '',
+        error: 'La URL de encuestado debe pertenecer a docs.google.com.',
+      };
+    }
+
+    const isValidPath =
+      /^\/forms\/d\/e\/[^/]+\/viewform\/?$/.test(parsedUrl.pathname) ||
+      /^\/forms\/d\/[^/]+\/viewform\/?$/.test(parsedUrl.pathname);
+
+    if (!isValidPath) {
+      return {
+        isValid: false,
+        normalizedUrl: '',
+        error:
+          'La URL debe ser una URL válida de encuestado de Google Forms y terminar en /viewform.',
+      };
+    }
+  
+    if (parsedUrl.searchParams.has('usp') && parsedUrl.searchParams.get('usp') !== 'header') {
+      parsedUrl.searchParams.set('usp', 'header');
+    }
+
+    return {
+      isValid: true,
+      normalizedUrl: parsedUrl.toString(),
+      error: '',
+    };
+  };
+
+  const parseGoogleFormEditUrl = (rawUrl: string) => {
+    const trimmed = rawUrl.trim();
+
+    if (!trimmed) {
+      return {
+        isValid: false,
+        formId: '',
+        error: 'La URL de edición del formulario de Google es obligatoria.',
+      };
+    }
+
+    let parsedUrl: URL;
+
+    try {
+      parsedUrl = new URL(trimmed);
+    } catch {
+      return {
+        isValid: false,
+        formId: '',
+        error: 'La URL de edición del formulario de Google no es válida.',
+      };
+    }
+
+    // Validar protocolo
+    if (parsedUrl.protocol !== 'https:') {
+      return {
+        isValid: false,
+        formId: '',
+        error: 'La URL debe usar https.',
+      };
+    }
+
+    // Validar dominio
+    if (parsedUrl.hostname !== 'docs.google.com') {
+      return {
+        isValid: false,
+        formId: '',
+        error: 'La URL de edición debe pertenecer a docs.google.com.',
+      };
+    }
+
+    // Validar path
+    const match = parsedUrl.pathname.match(/^\/forms\/d\/([^/]+)\/edit\/?$/);
+
+    if (!match) {
+      return {
+        isValid: false,
+        formId: '',
+        error:
+          'La URL debe ser una URL de edición válida de Google Forms y terminar en /edit.',
+      };
+    }
+
+    return {
+      isValid: true,
+      formId: match[1],
+      error: '',
+    };
+  };
+
+
+
   const openCreateForm = () => {
     setEditingForm({
       title: '',
@@ -223,6 +348,7 @@ export default function AdminPanel({
       prefill_birth_date_entry: '',
       prefill_group_entry: '',
       google_form_id: '',
+      google_form_edit_url: '',
       google_form_watch_enabled: true,
       response_public_id_question_id: '',
       response_name_question_id: '',
@@ -273,6 +399,9 @@ export default function AdminPanel({
       prefill_birth_date_entry: form.prefill_birth_date_entry ?? '',
       prefill_group_entry: form.prefill_group_entry ?? '',
       google_form_id: form.google_form_id ?? '',
+      google_form_edit_url: form.google_form_id
+        ? `https://docs.google.com/forms/d/${form.google_form_id}/edit`
+        : '',
       google_form_watch_enabled: form.google_form_watch_enabled ?? false,
       response_public_id_question_id: form.response_public_id_question_id ?? '',
       response_name_question_id: form.response_name_question_id ?? '',
@@ -395,8 +524,22 @@ export default function AdminPanel({
       setFormModalError('El título y la URL son obligatorios.');
       return;
     }
-    if (editingForm.google_form_watch_enabled && !editingForm.google_form_id.trim()) {
-      setFormModalError('Si activas el seguimiento automático de respuestas, el ID del formulario de Google es obligatorio.');
+
+    const parsedRespondentUrl = parseGoogleFormRespondentUrl(editingForm.url);
+
+    if (!parsedRespondentUrl.isValid) {
+      setFormModalError(parsedRespondentUrl.error);
+      return;
+    }
+    const parsedEditUrl = editingForm.google_form_watch_enabled
+      ? parseGoogleFormEditUrl(editingForm.google_form_edit_url)
+      : null;
+
+    if (editingForm.google_form_watch_enabled && (!parsedEditUrl || !parsedEditUrl.isValid)) {
+      setFormModalError(
+        parsedEditUrl?.error ||
+          'La URL de edición del formulario de Google no es válida.'
+      );
       return;
     }
 
@@ -478,7 +621,7 @@ export default function AdminPanel({
     const payload = {
       title: editingForm.title.trim(),
       description: editingForm.description.trim() || null,
-      url: editingForm.url.trim(),
+      url: parsedRespondentUrl.normalizedUrl,
       circular_url: editingForm.circular_url.trim() || null,
       authorization_url: editingForm.authorization_url.trim() || null,
       active: editingForm.active,
@@ -517,7 +660,10 @@ export default function AdminPanel({
         editingForm.access_type === 'restricted' && editingForm.prefill_group_entry.trim()
           ? editingForm.prefill_group_entry.trim()
           : null,
-      google_form_id: editingForm.google_form_id.trim() || null,
+      google_form_id:
+        editingForm.google_form_watch_enabled && parsedEditUrl?.isValid
+          ? parsedEditUrl.formId
+          : null,
       google_form_watch_enabled: editingForm.google_form_watch_enabled,
 
       response_public_id_question_id:
@@ -621,10 +767,9 @@ export default function AdminPanel({
         return;
       }
     }
-
     if (
       editingForm.google_form_watch_enabled &&
-      editingForm.google_form_id.trim() &&
+      parsedEditUrl?.isValid &&
       formId
     ) {
       try {
@@ -734,10 +879,26 @@ export default function AdminPanel({
     );
   });
 
+  const googleFormEditUrlValidation =
+    editingForm && editingForm.google_form_watch_enabled
+      ? parseGoogleFormEditUrl(editingForm.google_form_edit_url)
+      : null;
+
+  const googleFormRespondentUrlValidation = editingForm
+    ? parseGoogleFormRespondentUrl(editingForm.url)
+    : null;
+
   const isSaveDisabled = !!editingForm && (
     !editingForm.title.trim() ||
     !editingForm.url.trim() ||
-    (editingForm.google_form_watch_enabled && !editingForm.google_form_id.trim()) ||
+    !googleFormRespondentUrlValidation ||
+    !googleFormRespondentUrlValidation.isValid ||
+    (
+      editingForm.google_form_watch_enabled &&
+      (!editingForm.google_form_edit_url.trim() ||
+        !googleFormEditUrlValidation ||
+        !googleFormEditUrlValidation.isValid)
+    ) ||
     (
       editingForm.access_type === 'public' &&
       !editingForm.prefill_parent_email_entry.trim()
@@ -1135,7 +1296,7 @@ export default function AdminPanel({
 
                 <div className="md:col-span-2">
                   <label className="block text-sm font-bold text-slate-700 mb-2">
-                    URL de Google Forms
+                    URL de <strong>encuestado</strong> de Google Forms
                   </label>
                   <input
                     required
@@ -1144,6 +1305,15 @@ export default function AdminPanel({
                     onChange={(e) => setEditingForm({ ...editingForm, url: e.target.value })}
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
                   />
+                  <p className="mt-2 text-sm text-slate-500">
+                    Debe ser una URL válida de encuestado de Google Forms. Si incluye un parámetro <span className="font-mono">usp</span> distinto de <span className="font-mono">header</span>, se corregirá automáticamente al guardar.
+                  </p>
+
+                  {googleFormRespondentUrlValidation && !googleFormRespondentUrlValidation.isValid && (
+                    <p className="mt-2 text-sm text-red-600">
+                      {googleFormRespondentUrlValidation.error}
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -1204,18 +1374,29 @@ export default function AdminPanel({
                 {editingForm.google_form_watch_enabled && (
                   <div className="md:col-span-2">
                     <label className="block text-sm font-bold text-slate-700 mb-2">
-                      ID de EDICIÓN del formulario de Google
+                      URL de <strong>edición</strong> del formulario de Google
                     </label>
                     <input
-                      type="text"
-                      value={editingForm.google_form_id}
-                      onChange={(e) => setEditingForm({ ...editingForm, google_form_id: e.target.value })}
-                      placeholder="Ej: 1FAIpQLSe..."
+                      type="url"
+                      value={editingForm.google_form_edit_url}
+                      onChange={(e) =>
+                        setEditingForm({
+                          ...editingForm,
+                          google_form_edit_url: e.target.value,
+                        })
+                      }
+                      placeholder="https://docs.google.com/forms/d/XXXXXXXXXXXX/edit"
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
                     />
                     <p className="mt-2 text-sm text-slate-500">
-                      Se usará para integrar este formulario con Google Forms API y detectar respuestas enviadas.
+                      Debe ser una URL de edición válida de Google Forms. A partir de ella se extraerá automáticamente el ID interno del formulario.
                     </p>
+
+                    {googleFormEditUrlValidation && !googleFormEditUrlValidation.isValid && (
+                      <p className="mt-2 text-sm text-red-600">
+                        {googleFormEditUrlValidation.error}
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -1779,7 +1960,7 @@ export default function AdminPanel({
 
               {isSaveDisabled && (
                 <p className="text-sm text-amber-700">
-                  Completa todos los campos obligatorios antes de guardar.
+                  Completa todos los campos obligatorios y corrige los errores antes de guardar.
                 </p>
               )}
             </form>

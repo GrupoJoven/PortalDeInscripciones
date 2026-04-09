@@ -52,6 +52,7 @@ export interface EditingForm {
   prefill_birth_date_entry: string;
   prefill_group_entry: string;
   google_form_id: string;
+  google_form_edit_url: string;
   google_form_watch_enabled: boolean;
   response_public_id_question_id: string;
   response_name_question_id: string;
