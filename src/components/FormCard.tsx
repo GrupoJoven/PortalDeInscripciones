@@ -20,6 +20,9 @@ export default function FormCard({ form, onAccessClick }: FormCardProps) {
       return;
     }
 
+    window.open(form.url, '_blank', 'noopener,noreferrer');
+  };
+
   const handleCircularClick = () => {
     if (!form.circular_url) return;
     window.open(form.circular_url, '_blank', 'noopener,noreferrer');
@@ -30,9 +33,6 @@ export default function FormCard({ form, onAccessClick }: FormCardProps) {
     window.open(form.authorization_url, '_blank', 'noopener,noreferrer');
   };
 
-    window.open(form.url, '_blank', 'noopener,noreferrer');
-  };
-
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -40,7 +40,7 @@ export default function FormCard({ form, onAccessClick }: FormCardProps) {
       className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all group"
     >
       <div className="flex justify-between items-start mb-4 gap-3">
-        <h3 className="text-xl font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">
+        <h3 className="min-w-0 flex-1 break-words text-xl font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">
           {form.title}
         </h3>
 
@@ -72,6 +72,7 @@ export default function FormCard({ form, onAccessClick }: FormCardProps) {
           </div>
         )}
       </div>
+
       {isOpen && (
         <div className="space-y-3">
           <button
