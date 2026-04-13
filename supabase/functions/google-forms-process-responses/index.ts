@@ -61,7 +61,14 @@ function normalizeDni(value: string | null | undefined): string {
 }
 
 function normalizeGender(value: string | null | undefined): string {
-  return normalizeText(value)
+  const normalized = normalizeText(value)
+
+  if (!normalized) return ''
+
+  if (normalized === 'male' || normalized === 'masculino') return 'male'
+  if (normalized === 'female' || normalized === 'femenino') return 'female'
+
+  return normalized
 }
 
 function normalizeSchool(value: string | null | undefined): string {

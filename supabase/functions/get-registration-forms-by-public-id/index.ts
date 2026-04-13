@@ -246,7 +246,7 @@ async function getRestrictedFormsForStudent(
         [form.prefill_public_id_entry]: publicId,
         [form.prefill_name_entry]: studentRow.name,
         [form.prefill_dni_entry]: studentRow.dni,
-        [form.prefill_gender_entry]: studentRow.gender,
+        [form.prefill_gender_entry]: mapDatabaseGenderToGoogleForm(studentRow.gender),
         [form.prefill_parent_email_entry]: studentRow.parent_email,
         [form.prefill_school_entry]: studentRow.school,
         [form.prefill_birth_date_entry]: formatBirthDate(studentRow.birth_date),
@@ -356,6 +356,15 @@ async function ensureVerificationEmailSent({
     console.error("Error sending verification email:", sendResult);
     throw new Error("email_send_failed");
   }
+}
+
+function mapDatabaseGenderToGoogleForm(value: string | null | undefined): string {
+  const normalized = (value ?? '').trim().toLowerCase()
+
+  if (normalized === 'male') return 'MASCULINO'
+  if (normalized === 'female') return 'FEMENINO'
+
+  return value ?? ''
 }
 
 function normalizeEmail(email: string | null | undefined) {
