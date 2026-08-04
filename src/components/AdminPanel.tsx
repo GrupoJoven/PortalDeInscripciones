@@ -861,15 +861,24 @@ export default function AdminPanel({
   // La edge function recalcula estos mismos criterios en el servidor.
   const remindersSummary = useMemo(() => {
     const emails = new Set<string>();
+    const skipped: { id: string; name: string; group_name: string; reason: string }[] = [];
     let includedStudents = 0;
-    let skippedStudents = 0;
 
     for (const row of accessRows) {
       const email = (row.parent_email ?? '').trim().toLowerCase();
       const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
       if (!row.public_id || !isValidEmail) {
-        skippedStudents++;
+        const reasons: string[] = [];
+        if (!row.public_id) reasons.push('sin identificador');
+        if (!isValidEmail) reasons.push(email ? 'email no válido' : 'sin email');
+
+        skipped.push({
+          id: row.id,
+          name: row.name,
+          group_name: row.group_name,
+          reason: reasons.join(' y '),
+        });
         continue;
       }
 
@@ -880,7 +889,7 @@ export default function AdminPanel({
     return {
       recipients: emails.size,
       includedStudents,
-      skippedStudents,
+      skipped,
     };
   }, [accessRows]);
 
@@ -1394,7 +1403,7 @@ export default function AdminPanel({
               </button>
             </div>
 
-            <div className="p-8 space-y-4">
+            <div className="p-8 space-y-4 max-h-[70vh] overflow-y-auto">
               <p className="text-slate-600">
                 Se enviará un correo electrónico a cada dirección de email de padre/madre registrada,
                 con el nombre de su hijo/a (o hijos/as) y el identificador de acceso al portal de cada uno.
@@ -1411,9 +1420,36 @@ export default function AdminPanel({
                 </p>
                 <p>
                   <span className="font-bold text-slate-700">Alumnos omitidos:</span>{' '}
-                  {remindersSummary.skippedStudents} (sin identificador o sin email válido)
+                  {remindersSummary.skipped.length} (sin identificador o sin email válido)
                 </p>
               </div>
+
+              {remindersSummary.skipped.length > 0 && (
+                <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                  <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
+                    <p className="text-sm font-bold text-slate-700">
+                      Alumnos que no recibirán identificador
+                    </p>
+                  </div>
+
+                  <ul className="max-h-52 overflow-y-auto divide-y divide-slate-100">
+                    {remindersSummary.skipped.map((student) => (
+                      <li
+                        key={student.id}
+                        className="px-4 py-2.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1"
+                      >
+                        <span className="text-sm font-semibold text-slate-700">
+                          {student.name}
+                          <span className="ml-2 font-normal text-slate-400">{student.group_name}</span>
+                        </span>
+                        <span className="text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+                          {student.reason}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-2xl p-4">
                 Esta acción no se puede deshacer: los correos se envían de inmediato. No cierres esta
