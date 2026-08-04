@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { motion } from 'motion/react';
 import { 
@@ -12,7 +12,8 @@ import {
   Copy,
   KeyRound,
   Settings,
-  AlertCircle
+  AlertCircle,
+  Mail
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -55,6 +56,15 @@ export default function AdminPanel({
   const [accessSearch, setAccessSearch] = useState('');
   const [selectedAccessGroupId, setSelectedAccessGroupId] = useState<'all' | string>('all');
   const [regeneratingStudentId, setRegeneratingStudentId] = useState<string | null>(null);
+
+  const [remindersModalOpen, setRemindersModalOpen] = useState(false);
+  const [sendingReminders, setSendingReminders] = useState(false);
+  const [remindersError, setRemindersError] = useState('');
+  const [remindersResult, setRemindersResult] = useState<{
+    sent: number;
+    failed: number;
+    skippedStudents: number;
+  } | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -847,6 +857,88 @@ export default function AdminPanel({
     setRegeneratingStudentId(null);
   };
 
+  // Resumen mostrado en la confirmación previa al envío masivo de identificadores.
+  // La edge function recalcula estos mismos criterios en el servidor.
+  const remindersSummary = useMemo(() => {
+    const emails = new Set<string>();
+    let includedStudents = 0;
+    let skippedStudents = 0;
+
+    for (const row of accessRows) {
+      const email = (row.parent_email ?? '').trim().toLowerCase();
+      const isValidEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+      if (!row.public_id || !isValidEmail) {
+        skippedStudents++;
+        continue;
+      }
+
+      emails.add(email);
+      includedStudents++;
+    }
+
+    return {
+      recipients: emails.size,
+      includedStudents,
+      skippedStudents,
+    };
+  }, [accessRows]);
+
+  const sendPublicIdReminders = async () => {
+    setSendingReminders(true);
+    setRemindersError('');
+    setRemindersResult(null);
+
+    try {
+      let offset = 0;
+      let sent = 0;
+      let failed = 0;
+      let skippedStudents = 0;
+
+      // La función procesa por lotes para no agotar el tiempo de ejecución:
+      // devuelve next_offset mientras queden destinatarios pendientes.
+      while (true) {
+        const { data, error } = await supabase.functions.invoke('send-public-id-reminders', {
+          body: { offset },
+        });
+
+        if (error) {
+          console.error(error);
+          throw new Error('No se pudo completar el envío de identificadores.');
+        }
+
+        if (!data?.ok) {
+          console.error(data);
+          throw new Error(
+            data?.error === 'forbidden'
+              ? 'No tienes permisos para enviar los identificadores.'
+              : 'No se pudo completar el envío de identificadores.'
+          );
+        }
+
+        sent += data.sent ?? 0;
+        failed += data.failed ?? 0;
+        skippedStudents = (data.skipped_no_public_id ?? 0) + (data.skipped_invalid_email ?? 0);
+
+        const nextOffset = data.next_offset;
+
+        if (typeof nextOffset !== 'number' || nextOffset <= offset) break;
+
+        offset = nextOffset;
+      }
+
+      setRemindersResult({ sent, failed, skippedStudents });
+      setRemindersModalOpen(false);
+    } catch (err) {
+      console.error(err);
+      setRemindersError(
+        err instanceof Error ? err.message : 'No se pudo completar el envío de identificadores.'
+      );
+    } finally {
+      setSendingReminders(false);
+    }
+  };
+
   const copyToClipboard = async (text: string, rowId: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -1138,6 +1230,39 @@ export default function AdminPanel({
 
       {activeTab === 'access' && (
         <>
+          <div className="flex justify-end mb-6">
+            <button
+              onClick={() => {
+                setRemindersError('');
+                setRemindersResult(null);
+                setRemindersModalOpen(true);
+              }}
+              disabled={loadingAccess || sendingReminders}
+              className="bg-indigo-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-60 transition-all flex items-center gap-2 shadow-lg shadow-indigo-100"
+            >
+              <Mail className="w-4 h-4" />
+              {sendingReminders ? 'Enviando correos...' : 'Recordar identificadores'}
+            </button>
+          </div>
+
+          {remindersError && (
+            <div className="mb-6 bg-red-50 border border-red-200 text-red-700 rounded-2xl p-4">
+              {remindersError}
+            </div>
+          )}
+
+          {remindersResult && (
+            <div className="mb-6 bg-green-50 border border-green-200 text-green-800 rounded-2xl p-4">
+              <p className="font-bold mb-1">Envío completado</p>
+              <p className="text-sm">
+                Correos enviados: {remindersResult.sent}
+                {remindersResult.failed > 0 && ` · Fallidos: ${remindersResult.failed}`}
+                {remindersResult.skippedStudents > 0 &&
+                  ` · Alumnos omitidos (sin identificador o sin email válido): ${remindersResult.skippedStudents}`}
+              </p>
+            </div>
+          )}
+
           <div className="bg-white border border-slate-200 rounded-3xl p-5 mb-6">
             <div className="flex flex-col lg:flex-row gap-4 lg:items-center">
               <div className="relative flex-1 min-w-0">
@@ -1249,6 +1374,78 @@ export default function AdminPanel({
             </div>
           )}
         </>
+      )}
+
+      {remindersModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-6">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden"
+          >
+            <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center">
+              <h3 className="text-2xl font-bold text-slate-800">Recordar identificadores</h3>
+              <button
+                onClick={() => setRemindersModalOpen(false)}
+                disabled={sendingReminders}
+                className="text-slate-400 hover:text-slate-600 disabled:opacity-50 transition-colors"
+              >
+                <XCircle className="w-8 h-8" />
+              </button>
+            </div>
+
+            <div className="p-8 space-y-4">
+              <p className="text-slate-600">
+                Se enviará un correo electrónico a cada dirección de email de padre/madre registrada,
+                con el nombre de su hijo/a (o hijos/as) y el identificador de acceso al portal de cada uno.
+              </p>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm text-slate-600 space-y-1">
+                <p>
+                  <span className="font-bold text-slate-700">Correos a enviar:</span>{' '}
+                  {remindersSummary.recipients}
+                </p>
+                <p>
+                  <span className="font-bold text-slate-700">Alumnos incluidos:</span>{' '}
+                  {remindersSummary.includedStudents}
+                </p>
+                <p>
+                  <span className="font-bold text-slate-700">Alumnos omitidos:</span>{' '}
+                  {remindersSummary.skippedStudents} (sin identificador o sin email válido)
+                </p>
+              </div>
+
+              <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                Esta acción no se puede deshacer: los correos se envían de inmediato. No cierres esta
+                página hasta que finalice el proceso.
+              </p>
+
+              {remindersError && (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {remindersError}
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setRemindersModalOpen(false)}
+                  disabled={sendingReminders}
+                  className="flex-1 px-4 py-3 bg-white border border-slate-200 rounded-xl font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={sendPublicIdReminders}
+                  disabled={sendingReminders || remindersSummary.recipients === 0}
+                  className="flex-1 px-4 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-60 transition-all flex items-center justify-center gap-2"
+                >
+                  <Mail className="w-4 h-4" />
+                  {sendingReminders ? 'Enviando...' : 'Enviar correos'}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
       )}
 
       {editingForm && (
