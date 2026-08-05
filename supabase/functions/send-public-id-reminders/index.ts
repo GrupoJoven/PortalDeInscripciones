@@ -18,11 +18,12 @@ type StudentRow = {
   id: string;
   name: string;
   parent_email: string | null;
+  group_id: string | null;
 };
 
 type Recipient = {
   email: string;
-  children: { name: string; public_id: string }[];
+  children: { name: string; public_id: string; group_name: string }[];
 };
 
 Deno.serve(async (req) => {
@@ -82,15 +83,27 @@ Deno.serve(async (req) => {
     const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0;
 
     // 2) Construir la lista de destinatarios (un correo por parent_email).
-    const students = await fetchAllRows<StudentRow>(supabase, "students", "id, name, parent_email", "id");
+    const students = await fetchAllRows<StudentRow>(
+      supabase,
+      "students",
+      "id, name, parent_email, group_id",
+      "id"
+    );
     const accessRows = await fetchAllRows<{ student_id: string; public_id: string }>(
       supabase,
       "student_public_access",
       "student_id, public_id",
       "student_id"
     );
+    const groupRows = await fetchAllRows<{ id: string; name: string }>(
+      supabase,
+      "groups",
+      "id, name",
+      "id"
+    );
 
     const publicIdByStudentId = new Map(accessRows.map((row) => [row.student_id, row.public_id]));
+    const groupNameById = new Map(groupRows.map((row) => [row.id, row.name]));
 
     const recipientsByEmail = new Map<string, Recipient>();
     let skippedNoPublicId = 0;
@@ -112,15 +125,18 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      const child = {
+        name: student.name,
+        public_id: publicId,
+        group_name: (student.group_id && groupNameById.get(student.group_id)) || "Sin grupo",
+      };
+
       const existing = recipientsByEmail.get(normalizedEmail);
 
       if (existing) {
-        existing.children.push({ name: student.name, public_id: publicId });
+        existing.children.push(child);
       } else {
-        recipientsByEmail.set(normalizedEmail, {
-          email,
-          children: [{ name: student.name, public_id: publicId }],
-        });
+        recipientsByEmail.set(normalizedEmail, { email, children: [child] });
       }
     }
 
@@ -289,6 +305,7 @@ function buildReminderHtml(recipient: Recipient, appBaseUrl: string) {
       (child) => `
         <tr>
           <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;">${escapeHtml(child.name)}</td>
+          <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;">${escapeHtml(child.group_name)}</td>
           <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-weight:bold;color:#4338ca;">${escapeHtml(
             child.public_id
           )}</td>
@@ -321,6 +338,7 @@ function buildReminderHtml(recipient: Recipient, appBaseUrl: string) {
         <thead>
           <tr>
             <th style="text-align:left;padding:10px 14px;border-bottom:2px solid #cbd5e1;">Nombre</th>
+            <th style="text-align:left;padding:10px 14px;border-bottom:2px solid #cbd5e1;">Grupo</th>
             <th style="text-align:left;padding:10px 14px;border-bottom:2px solid #cbd5e1;">Identificador</th>
           </tr>
         </thead>
