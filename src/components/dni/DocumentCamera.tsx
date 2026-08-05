@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Camera, Zap, ZapOff, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Zap, ZapOff, AlertCircle } from 'lucide-react';
 
 import {
   DNI_ASPECT_RATIO,
@@ -325,10 +325,13 @@ export default function DocumentCamera({
         {hint && <p className="text-sm text-slate-600 mt-1">{hint}</p>}
       </div>
 
+      {/* Altura limitada al viewport: con `aspect-ratio: 3/4` el visor medía
+          casi 480 px en un móvil y empujaba el botón de disparo fuera de la
+          pantalla, obligando a hacer scroll con el móvil sobre el documento. */}
       <div
         ref={containerRef}
         className="relative w-full overflow-hidden rounded-3xl bg-slate-900"
-        style={{ aspectRatio: '3 / 4' }}
+        style={{ height: 'min(58dvh, 133vw, 520px)' }}
       >
         <video
           ref={videoRef}
@@ -394,9 +397,42 @@ export default function DocumentCamera({
           ))}
         </div>
 
+        {/* Disparador flotante, siempre visible sobre el visor. */}
+        <div className="absolute left-0 right-0 bottom-4 flex flex-col items-center gap-3">
+          <button
+            type="button"
+            onClick={capturar}
+            disabled={(!puedeCapturar && !puedeForzar) || capturing}
+            aria-label="Hacer la foto"
+            className={`w-[72px] h-[72px] rounded-full flex items-center justify-center transition-all ${
+              puedeCapturar
+                ? 'bg-white ring-4 ring-green-500 shadow-2xl scale-100'
+                : puedeForzar
+                  ? 'bg-white/85 ring-4 ring-white/60 shadow-xl'
+                  : 'bg-white/25 ring-4 ring-white/25 scale-90'
+            }`}
+          >
+            <span
+              className={`rounded-full transition-all ${
+                puedeCapturar
+                  ? 'w-14 h-14 bg-green-500'
+                  : puedeForzar
+                    ? 'w-14 h-14 bg-slate-400'
+                    : 'w-12 h-12 bg-white/40'
+              }`}
+            />
+          </button>
+
+          {puedeForzar && !puedeCapturar && (
+            <span className="text-[11px] font-semibold text-white/90 bg-slate-900/70 px-3 py-1 rounded-full backdrop-blur">
+              Puedes disparar igualmente
+            </span>
+          )}
+        </div>
+
         {/* Aviso de encuadre. Al tocarlo se ven los números, por si hay que
-            diagnosticar por qué no se desbloquea el botón. */}
-        <div className="absolute left-0 right-0 bottom-4 px-4">
+            diagnosticar por qué no se desbloquea el disparador. */}
+        <div className="absolute left-0 right-0 top-4 px-4">
           <button
             type="button"
             onClick={() => setVerDiagnostico((v) => !v)}
@@ -411,6 +447,10 @@ export default function DocumentCamera({
 
           {verDiagnostico && analysis && (
             <div className="mx-auto mt-2 max-w-xs rounded-2xl bg-slate-900/85 px-4 py-3 text-[11px] font-mono text-slate-100 backdrop-blur">
+              <div className="flex justify-between">
+                <span>cobertura</span>
+                <span>{(analysis.metrics.cobertura * 100).toFixed(0)}%</span>
+              </div>
               <div className="flex justify-between">
                 <span>detalle dentro</span>
                 <span>{analysis.metrics.detalleDentro.toFixed(1)}</span>
@@ -453,36 +493,13 @@ export default function DocumentCamera({
 
       <canvas ref={analysisCanvasRef} className="hidden" />
 
-      <button
-        type="button"
-        onClick={capturar}
-        disabled={!puedeCapturar || capturing}
-        className={`w-full py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all ${
-          puedeCapturar
-            ? 'bg-green-600 text-white shadow-lg shadow-green-200'
-            : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-        }`}
-      >
-        {puedeCapturar ? (
-          <CheckCircle2 className="w-5 h-5" />
-        ) : (
-          <Camera className="w-5 h-5" />
-        )}
-        {puedeCapturar ? 'Hacer la foto' : 'Ajusta el encuadre'}
-      </button>
-
-      {/* Salida de emergencia: si el comprobador no se pone verde, el usuario
-          nunca debe quedarse atrapado. El OCR recorta el documento igualmente. */}
-      {puedeForzar && !puedeCapturar && (
-        <button
-          type="button"
-          onClick={capturar}
-          disabled={capturing}
-          className="w-full py-3 rounded-2xl font-semibold text-sm bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 transition-all disabled:opacity-60"
-        >
-          Hacer la foto igualmente
-        </button>
-      )}
+      <p className="text-center text-xs text-slate-500">
+        {puedeCapturar
+          ? 'Pulsa el botón blanco para hacer la foto.'
+          : puedeForzar
+            ? 'El botón sigue activo: puedes hacer la foto aunque el encuadre no esté perfecto.'
+            : 'El botón se activará solo cuando el documento esté bien encuadrado.'}
+      </p>
     </div>
   );
 }

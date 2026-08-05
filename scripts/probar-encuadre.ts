@@ -31,12 +31,15 @@ function frame(pintar: (x: number, y: number) => number) {
 const textura = (x: number, y: number) =>
   (y % 7 < 2 && x % 11 < 6) ? 25 : 232;
 
+const dentro = (x: number, y: number, x0: number, x1: number, y0: number, y1: number) =>
+  x >= x0 && x < x1 && y >= y0 && y < y1;
+
 const gx0 = guide.x * W, gx1 = (guide.x + guide.width) * W;
 const gy0 = guide.y * H, gy1 = (guide.y + guide.height) * H;
 
 const casos: Array<[string, ReturnType<typeof frame>, string | null]> = [
   ['DNI encajado en el marco',
-    frame((x, y) => (x >= gx0 && x < gx1 && y >= gy0 && y < gy1) ? textura(x, y) : 110),
+    frame((x, y) => dentro(x, y, gx0, gx1, gy0, gy1) ? textura(x, y) : 110),
     null],
 
   ['Mesa vacía, sin documento',
@@ -44,27 +47,50 @@ const casos: Array<[string, ReturnType<typeof frame>, string | null]> = [
     'no_document'],
 
   ['DNI mucho más grande que el marco (se sale)',
-    frame((x, y) => (x >= gx0 - 40 && x < gx1 + 40 && y >= gy0 - 60 && y < gy1 + 60) ? textura(x, y) : 110),
+    frame((x, y) => dentro(x, y, gx0 - 40, gx1 + 40, gy0 - 60, gy1 + 60) ? textura(x, y) : 110),
     'out_of_frame'],
 
-  // === El fallo que reportó Carlos ===
-  ['Sombra/degradado fuerte sobre la mesa (antes daba out_of_frame)',
+  // === Los fallos que reportó Carlos ===
+  ['Sombra/degradado fuerte sobre la mesa (daba out_of_frame)',
     frame((x, y) => {
       const fondo = 60 + Math.round((x / W) * 110) + Math.round((y / H) * 50);
-      return (x >= gx0 && x < gx1 && y >= gy0 && y < gy1) ? textura(x, y) : fondo;
+      return dentro(x, y, gx0, gx1, gy0, gy1) ? textura(x, y) : fondo;
     }),
     null],
 
+  ['Medio DNI fuera por la derecha (daba correcto)',
+    frame((x, y) => dentro(x, y, gx0 + (gx1 - gx0) / 2, gx1 + (gx1 - gx0) / 2, gy0, gy1)
+      ? textura(x, y) : 110),
+    'out_of_frame'],
+
+  ['Medio DNI fuera por abajo',
+    frame((x, y) => dentro(x, y, gx0, gx1, gy0 + (gy1 - gy0) / 2, gy1 + (gy1 - gy0) / 2)
+      ? textura(x, y) : 110),
+    'out_of_frame'],
+
+  ['DNI pequeño y centrado (lejos)',
+    frame((x, y) => {
+      const cx = (gx0 + gx1) / 2, cy = (gy0 + gy1) / 2;
+      const w = (gx1 - gx0) * 0.5, h = (gy1 - gy0) * 0.5;
+      return dentro(x, y, cx - w / 2, cx + w / 2, cy - h / 2, cy + h / 2) ? textura(x, y) : 110;
+    }),
+    'partial'],
+
+  ['DNI desplazado un cuarto a la izquierda',
+    frame((x, y) => dentro(x, y, gx0 - (gx1 - gx0) / 4, gx1 - (gx1 - gx0) / 4, gy0, gy1)
+      ? textura(x, y) : 110),
+    'out_of_frame'],
+
   ['Mesa oscura, DNI claro (mucho contraste de fondo)',
-    frame((x, y) => (x >= gx0 && x < gx1 && y >= gy0 && y < gy1) ? textura(x, y) : 30),
+    frame((x, y) => dentro(x, y, gx0, gx1, gy0, gy1) ? textura(x, y) : 30),
     null],
 
   ['Poca luz',
-    frame((x, y) => (x >= gx0 && x < gx1 && y >= gy0 && y < gy1) ? Math.round(textura(x, y) * 0.12) : 12),
+    frame((x, y) => dentro(x, y, gx0, gx1, gy0, gy1) ? Math.round(textura(x, y) * 0.12) : 12),
     'too_dark'],
 
   ['DNI desenfocado (liso, sin detalle)',
-    frame((x, y) => (x >= gx0 && x < gx1 && y >= gy0 && y < gy1) ? 200 : 110),
+    frame((x, y) => dentro(x, y, gx0, gx1, gy0, gy1) ? 200 : 110),
     'no_document'],
 ];
 
@@ -75,7 +101,7 @@ for (const [nombre, ctx, esperado] of casos) {
   if (!ok) fallos++;
   console.log(`${ok ? '  OK  ' : ' FALLO'} ${nombre}`);
   console.log(`        issue=${r.issue ?? 'ninguno'} (esperado ${esperado ?? 'ninguno'})  ` +
-    `dentro=${r.metrics.detalleDentro.toFixed(1)} fuera=${r.metrics.detalleFuera.toFixed(1)} ` +
+    `cob=${(r.metrics.cobertura*100).toFixed(0)}% dentro=${r.metrics.detalleDentro.toFixed(1)} fuera=${r.metrics.detalleFuera.toFixed(1)} ` +
     `nitidez=${r.metrics.nitidez.toFixed(0)} luz=${r.metrics.luz.toFixed(0)}`);
 }
 console.log(fallos ? `\n${fallos} FALLOS` : '\nTODO CORRECTO');

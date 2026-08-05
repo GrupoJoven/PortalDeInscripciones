@@ -37,6 +37,7 @@ export interface GuideRect {
 
 export type FrameIssue =
   | 'no_document'
+  | 'partial'
   | 'out_of_frame'
   | 'blurry'
   | 'too_dark'
@@ -44,9 +45,11 @@ export type FrameIssue =
   | 'glare';
 
 export interface FrameMetrics {
+  /** Proporción de celdas del marco que parecen documento (0-1). */
+  cobertura: number;
   /** Detalle (gradiente medio) dentro del marco. El DNI tiene mucho. */
   detalleDentro: number;
-  /** Detalle en el anillo justo por fuera del marco. La mesa tiene poco. */
+  /** Detalle de la banda exterior más invadida. La mesa tiene poco. */
   detalleFuera: number;
   nitidez: number;
   luz: number;
@@ -61,7 +64,8 @@ export interface FrameAnalysis {
 }
 
 const MENSAJES: Record<FrameIssue, string> = {
-  no_document: 'Encaja el documento dentro del marco',
+  no_document: 'Coloca el documento dentro del marco',
+  partial: 'El documento debe llenar todo el marco',
   out_of_frame: 'El documento se sale del marco',
   blurry: 'Mantén el móvil quieto para enfocar',
   too_dark: 'Hace falta más luz',
@@ -75,23 +79,45 @@ export const MENSAJE_CORRECTO = 'Encuadre correcto, ya puedes hacer la foto';
 // Deliberadamente permisivos: una foto regular que el OCR sabe arreglar es
 // mucho mejor que un usuario bloqueado sin poder disparar.
 const UMBRALES = {
-  /** Por debajo, dentro del marco no hay nada con aspecto de documento. */
-  detalleMinimoDentro: 3.5,
-  /** El anillo exterior solo delata desbordamiento si tiene tanto detalle
-   *  como el interior y además es alto en términos absolutos. */
-  detalleFueraAbsoluto: 5.0,
-  proporcionFueraDentro: 0.85,
+  /** Gradiente a partir del cual un píxel se considera "con detalle". */
+  gradientePixel: 12,
+  /**
+   * Proporción de píxeles con detalle que debe tener una celda para contar
+   * como documento. Se mide la densidad y no la media porque una celda casi
+   * vacía atravesada por el canto de la tarjeta ya da una media alta: el borde
+   * es un escalón enorme. La densidad distingue textura real de un solo canto.
+   */
+  densidadCelda: 0.06,
+  /** Por debajo, en el marco no hay nada con aspecto de documento. */
+  coberturaMinima: 0.3,
+  /** Por debajo, el documento no llena el marco (está desplazado o lejos). */
+  coberturaBuena: 0.55,
+  /**
+   * Una banda exterior está invadida si tiene mucho más detalle del que deja
+   * el propio borde de la tarjeta. Se mide banda a banda, no de media: si se
+   * promediaran las cuatro, medio DNI fuera por un lado quedaría diluido por
+   * los tres lados que sí están sobre la mesa.
+   */
+  invasionAbsoluta: 28,
+  invasionRelativa: 0.45,
   nitidezMinima: 18,
   luzMinima: 45,
   luzMaxima: 232,
   reflejoMaximo: 0.09,
 };
 
+/** Cuántas celdas se usan para medir la cobertura del marco. */
+const CELDAS_X = 6;
+const CELDAS_Y = 4;
+
 /** Cuánto se mete hacia dentro la zona analizada, respecto al marco. */
 const MARGEN_INTERIOR = 0.06;
 
+/** Hueco entre el marco y el anillo, para no medir el borde de la tarjeta. */
+const HUECO_ANILLO = 0.02;
+
 /** Ancho del anillo exterior, en proporción al tamaño del marco. */
-const ANCHO_ANILLO = 0.08;
+const ANCHO_ANILLO = 0.1;
 
 /**
  * Recorta la zona visible del vídeo (equivalente a object-fit: cover) y la
@@ -205,21 +231,14 @@ export function analyzeFrame(
     y1: marco.y1 - altoMarco * MARGEN_INTERIOR,
   };
 
-  // Anillo exterior: banda pegada al marco por fuera, recortada al lienzo.
-  const exterior: Region = {
-    x0: Math.max(0, marco.x0 - anchoMarco * ANCHO_ANILLO),
-    y0: Math.max(0, marco.y0 - altoMarco * ANCHO_ANILLO),
-    x1: Math.min(width, marco.x1 + anchoMarco * ANCHO_ANILLO),
-    y1: Math.min(height, marco.y1 + altoMarco * ANCHO_ANILLO),
-  };
-
   const luz = medirLuz(luma, width, interior);
   const nitidez = medirNitidez(luma, width, interior);
-  const detalleDentro = medirDetalle(luma, width, interior, null);
-  const detalleFuera = medirDetalle(luma, width, exterior, marco);
+  const { cobertura, detalleMedio } = medirCobertura(luma, width, height, interior);
+  const detalleFuera = medirBandaMasInvadida(luma, width, height, marco);
 
   const metrics: FrameMetrics = {
-    detalleDentro,
+    cobertura,
+    detalleDentro: detalleMedio,
     detalleFuera,
     nitidez,
     luz: luz.media,
@@ -241,22 +260,131 @@ function detectarProblema(m: FrameMetrics): FrameIssue | null {
   if (m.luz < UMBRALES.luzMinima) return 'too_dark';
   if (m.luz > UMBRALES.luzMaxima) return 'too_bright';
 
-  if (m.detalleDentro < UMBRALES.detalleMinimoDentro) return 'no_document';
+  if (m.cobertura < UMBRALES.coberturaMinima) return 'no_document';
 
-  // Solo damos por desbordado el documento si por fuera del marco hay tanto
-  // detalle como por dentro. Un fondo liso apenas tiene, así que esto no se
-  // dispara con sombras ni con degradados de luz.
+  // El desbordamiento se comprueba antes que la cobertura: con el documento
+  // medio fuera, la mitad que queda dentro puede dar cobertura suficiente,
+  // pero la banda por la que se sale lo delata.
   if (
-    m.detalleFuera > UMBRALES.detalleFueraAbsoluto &&
-    m.detalleFuera > m.detalleDentro * UMBRALES.proporcionFueraDentro
+    m.detalleFuera > UMBRALES.invasionAbsoluta &&
+    m.detalleFuera > m.detalleDentro * UMBRALES.invasionRelativa
   ) {
     return 'out_of_frame';
   }
+
+  if (m.cobertura < UMBRALES.coberturaBuena) return 'partial';
 
   if (m.reflejo > UMBRALES.reflejoMaximo) return 'glare';
   if (m.nitidez < UMBRALES.nitidezMinima) return 'blurry';
 
   return null;
+}
+
+/**
+ * Divide el marco en una rejilla y cuenta cuántas celdas tienen detalle de
+ * documento. Con el DNI bien encajado casi todas lo tienen; si está desplazado
+ * o queda pequeño, las celdas que caen sobre la mesa bajan la cobertura.
+ *
+ * Se cuenta por celdas y no con la media del marco entero porque la media se
+ * deja engañar: media tarjeta con mucho detalle promedia igual que una tarjeta
+ * entera con detalle moderado.
+ */
+function medirCobertura(
+  luma: Float32Array,
+  width: number,
+  height: number,
+  interior: Region,
+) {
+  const anchoCelda = (interior.x1 - interior.x0) / CELDAS_X;
+  const altoCelda = (interior.y1 - interior.y0) / CELDAS_Y;
+
+  let conDocumento = 0;
+  let sumaDetalle = 0;
+
+  for (let cy = 0; cy < CELDAS_Y; cy += 1) {
+    for (let cx = 0; cx < CELDAS_X; cx += 1) {
+      const celda: Region = {
+        x0: interior.x0 + cx * anchoCelda,
+        y0: interior.y0 + cy * altoCelda,
+        x1: interior.x0 + (cx + 1) * anchoCelda,
+        y1: interior.y0 + (cy + 1) * altoCelda,
+      };
+
+      const { medio, densidad } = medirDetalle(luma, width, height, celda);
+      sumaDetalle += medio;
+
+      if (densidad > UMBRALES.densidadCelda) conDocumento += 1;
+    }
+  }
+
+  const totalCeldas = CELDAS_X * CELDAS_Y;
+
+  return {
+    cobertura: conDocumento / totalCeldas,
+    detalleMedio: sumaDetalle / totalCeldas,
+  };
+}
+
+/**
+ * Detalle de la banda exterior más invadida (arriba, abajo, izquierda o
+ * derecha). Se coge el máximo y no la media: si el documento se sale por un
+ * solo lado, promediar las cuatro bandas lo disimularía.
+ */
+function medirBandaMasInvadida(
+  luma: Float32Array,
+  width: number,
+  height: number,
+  marco: Region,
+) {
+  const anchoMarco = marco.x1 - marco.x0;
+  const altoMarco = marco.y1 - marco.y0;
+
+  const huecoX = anchoMarco * HUECO_ANILLO;
+  const huecoY = altoMarco * HUECO_ANILLO;
+  const bandaX = anchoMarco * ANCHO_ANILLO;
+  const bandaY = altoMarco * ANCHO_ANILLO;
+
+  const bandas: Region[] = [
+    // Arriba
+    {
+      x0: marco.x0,
+      y0: Math.max(0, marco.y0 - huecoY - bandaY),
+      x1: marco.x1,
+      y1: Math.max(0, marco.y0 - huecoY),
+    },
+    // Abajo
+    {
+      x0: marco.x0,
+      y0: Math.min(height, marco.y1 + huecoY),
+      x1: marco.x1,
+      y1: Math.min(height, marco.y1 + huecoY + bandaY),
+    },
+    // Izquierda
+    {
+      x0: Math.max(0, marco.x0 - huecoX - bandaX),
+      y0: marco.y0,
+      x1: Math.max(0, marco.x0 - huecoX),
+      y1: marco.y1,
+    },
+    // Derecha
+    {
+      x0: Math.min(width, marco.x1 + huecoX),
+      y0: marco.y0,
+      x1: Math.min(width, marco.x1 + huecoX + bandaX),
+      y1: marco.y1,
+    },
+  ];
+
+  let maximo = 0;
+
+  for (const banda of bandas) {
+    // Una banda pegada al borde del lienzo puede quedar sin superficie.
+    if (banda.x1 - banda.x0 < 3 || banda.y1 - banda.y0 < 3) continue;
+
+    maximo = Math.max(maximo, medirDetalle(luma, width, height, banda).medio);
+  }
+
+  return maximo;
 }
 
 function medirLuz(luma: Float32Array, width: number, region: Region) {
@@ -284,49 +412,46 @@ function medirLuz(luma: Float32Array, width: number, region: Region) {
 }
 
 /**
- * Gradiente medio de una región: alto donde hay texto, fotografía o bordes;
- * casi cero en una superficie lisa, aunque esté en sombra o mal iluminada.
+ * Detalle de una región, en dos medidas complementarias:
  *
- * Si se pasa `excluir`, los píxeles dentro de ese rectángulo se ignoran, que
- * es como se obtiene el anillo exterior.
+ *   - `medio`:    gradiente medio. Alto donde hay texto, fotografía o bordes;
+ *                 casi cero en una superficie lisa, aunque esté en sombra.
+ *   - `densidad`: proporción de píxeles con gradiente apreciable. Distingue
+ *                 una zona con textura de una zona lisa cruzada por un único
+ *                 borde, que daría un `medio` alto engañoso.
  */
 function medirDetalle(
   luma: Float32Array,
   width: number,
+  height: number,
   region: Region,
-  excluir: Region | null,
 ) {
   const x0 = Math.max(1, Math.floor(region.x0));
   const y0 = Math.max(1, Math.floor(region.y0));
   const x1 = Math.min(width - 1, Math.floor(region.x1));
-  const y1 = Math.min(luma.length / width - 1, Math.floor(region.y1));
+  const y1 = Math.min(height - 1, Math.floor(region.y1));
 
   let suma = 0;
+  let conDetalle = 0;
   let total = 0;
 
   for (let y = y0; y < y1; y += 2) {
     for (let x = x0; x < x1; x += 2) {
-      if (
-        excluir &&
-        x >= excluir.x0 &&
-        x < excluir.x1 &&
-        y >= excluir.y0 &&
-        y < excluir.y1
-      ) {
-        continue;
-      }
-
       const i = y * width + x;
 
       const dx = Math.abs(luma[i + 1] - luma[i - 1]);
       const dy = Math.abs(luma[i + width] - luma[i - width]);
+      const gradiente = dx + dy;
 
-      suma += dx + dy;
+      suma += gradiente;
+      if (gradiente > UMBRALES.gradientePixel) conDetalle += 1;
       total += 1;
     }
   }
 
-  return total === 0 ? 0 : suma / total;
+  if (total === 0) return { medio: 0, densidad: 0 };
+
+  return { medio: suma / total, densidad: conDetalle / total };
 }
 
 /** Varianza del laplaciano 3x3: cuanto más alta, más nítida es la imagen. */
