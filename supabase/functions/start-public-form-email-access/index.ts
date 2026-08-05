@@ -16,6 +16,19 @@ type PublicFormRow = {
   open_date: string | null;
   close_date: string | null;
   prefill_parent_email_entry: string | null;
+  dni_verification_enabled: boolean;
+  prefill_name_entry: string | null;
+  prefill_dni_entry: string | null;
+  prefill_address_entry: string | null;
+};
+
+type DniSession = {
+  id: string;
+  registration_form_id: string;
+  status: string;
+  minor_without_dni: boolean;
+  extracted: Record<string, unknown> | null;
+  expires_at: string;
 };
 
 Deno.serve(async (req) => {
@@ -42,6 +55,9 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => null);
     const formId = typeof body?.form_id === "string" ? body.form_id.trim() : "";
     const rawEmail = typeof body?.email === "string" ? body.email.trim() : "";
+    const dniSessionToken = typeof body?.dni_session_token === "string"
+      ? body.dni_session_token.trim()
+      : "";
 
     if (!formId || !rawEmail) {
       return jsonResponse({ ok: false, error: "missing_fields" }, 400);
@@ -71,7 +87,11 @@ Deno.serve(async (req) => {
         access_type,
         open_date,
         close_date,
-        prefill_parent_email_entry
+        prefill_parent_email_entry,
+        dni_verification_enabled,
+        prefill_name_entry,
+        prefill_dni_entry,
+        prefill_address_entry
       `)
       .eq("id", formId)
       .maybeSingle<PublicFormRow>();
@@ -92,6 +112,26 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Si el formulario exige verificación de DNI, no se puede llegar al
+    // formulario sin una sesión confirmada para ese mismo formulario.
+    let dniSession: DniSession | null = null;
+
+    if (formRow.dni_verification_enabled) {
+      dniSession = await loadConfirmedDniSession(supabase, dniSessionToken, formRow.id);
+
+      if (!dniSession) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: "dni_verification_required",
+            message:
+              "Este formulario requiere verificar el DNI antes de continuar. Vuelve a empezar el proceso.",
+          },
+          403
+        );
+      }
+    }
+
     const { data: verifiedRow, error: verifiedError } = await supabase
       .from("parent_email_verifications")
       .select("id, verified_at")
@@ -108,7 +148,7 @@ Deno.serve(async (req) => {
         {
           ok: true,
           status: "verified",
-          access_url: buildPublicFormAccessUrl(formRow, normalizedEmail),
+          access_url: buildPublicFormAccessUrl(formRow, normalizedEmail, dniSession),
         },
         200
       );
@@ -123,6 +163,7 @@ Deno.serve(async (req) => {
       formTitle: formRow.title,
       email: rawEmail,
       normalizedEmail,
+      dniSessionId: dniSession?.id ?? null,
     });
 
     return jsonResponse(
@@ -170,6 +211,7 @@ async function ensurePublicVerificationEmailSent({
   formTitle,
   email,
   normalizedEmail,
+  dniSessionId,
 }: {
   supabase: ReturnType<typeof createClient>;
   supabaseUrl: string;
@@ -179,13 +221,14 @@ async function ensurePublicVerificationEmailSent({
   formTitle: string;
   email: string;
   normalizedEmail: string;
+  dniSessionId: string | null;
 }): Promise<"sent" | "already_sent_recently"> {
   const now = Date.now();
   const tenMinutesAgoIso = new Date(now - 10 * 60 * 1000).toISOString();
 
   const { data: recentToken, error: recentTokenError } = await supabase
     .from("public_form_email_verification_tokens")
-    .select("id, created_at")
+    .select("id, created_at, dni_verification_session_id")
     .eq("registration_form_id", formId)
     .eq("normalized_email", normalizedEmail)
     .is("consumed_at", null)
@@ -200,6 +243,19 @@ async function ensurePublicVerificationEmailSent({
   }
 
   if (recentToken) {
+    // El enlace que ya está en su bandeja debe apuntar a la verificación de
+    // DNI más reciente, no a la de un intento anterior.
+    if (recentToken.dni_verification_session_id !== dniSessionId) {
+      const { error: relinkError } = await supabase
+        .from("public_form_email_verification_tokens")
+        .update({ dni_verification_session_id: dniSessionId })
+        .eq("id", recentToken.id);
+
+      if (relinkError) {
+        console.error("Error relinking DNI session to pending token:", relinkError);
+      }
+    }
+
     return "already_sent_recently";
   }
 
@@ -215,6 +271,7 @@ async function ensurePublicVerificationEmailSent({
       normalized_email: normalizedEmail,
       token_hash: tokenHash,
       expires_at: expiresAt,
+      dni_verification_session_id: dniSessionId,
     });
 
   if (insertError) {
@@ -253,7 +310,8 @@ async function ensurePublicVerificationEmailSent({
 
 function buildPublicFormAccessUrl(
   form: PublicFormRow,
-  email: string
+  email: string,
+  dniSession: DniSession | null = null
 ) {
   try {
     const url = new URL(form.url);
@@ -262,10 +320,64 @@ function buildPublicFormAccessUrl(
       url.searchParams.set(form.prefill_parent_email_entry, email);
     }
 
+    const extracted = dniSession?.extracted ?? null;
+
+    if (extracted) {
+      const numero = typeof extracted.numero === "string" ? extracted.numero.trim() : "";
+      const nombre = typeof extracted.nombre === "string" ? extracted.nombre.trim() : "";
+      const domicilio = typeof extracted.domicilio_texto === "string"
+        ? extracted.domicilio_texto.trim()
+        : "";
+
+      if (form.prefill_dni_entry && numero) {
+        url.searchParams.set(form.prefill_dni_entry, numero);
+      }
+
+      if (form.prefill_address_entry && domicilio) {
+        url.searchParams.set(form.prefill_address_entry, domicilio);
+      }
+
+      // Si se verificó el DNI de un progenitor porque el menor no tiene, el
+      // nombre leído es el del adulto: no debe prerrellenar el del menor.
+      if (form.prefill_name_entry && nombre && !dniSession?.minor_without_dni) {
+        url.searchParams.set(form.prefill_name_entry, nombre);
+      }
+    }
+
     return url.toString();
   } catch {
     return form.url;
   }
+}
+
+/**
+ * Recupera una sesión de verificación de DNI confirmada, vigente y asociada a
+ * este mismo formulario. Devuelve null si no cumple todo.
+ */
+async function loadConfirmedDniSession(
+  supabase: ReturnType<typeof createClient>,
+  desktopToken: string,
+  formId: string
+): Promise<DniSession | null> {
+  if (!desktopToken) return null;
+
+  const { data: session, error } = await supabase
+    .from("dni_verification_sessions")
+    .select("id, registration_form_id, status, minor_without_dni, extracted, expires_at")
+    .eq("desktop_token_hash", await sha256(desktopToken))
+    .maybeSingle<DniSession>();
+
+  if (error) {
+    console.error("Error loading DNI session:", error);
+    return null;
+  }
+
+  if (!session) return null;
+  if (session.registration_form_id !== formId) return null;
+  if (session.status !== "confirmed") return null;
+  if (new Date(session.expires_at).getTime() < Date.now()) return null;
+
+  return session;
 }
 
 function normalizeEmail(email: string | null | undefined) {

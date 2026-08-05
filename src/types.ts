@@ -19,6 +19,8 @@ export interface RegistrationForm {
   prefill_school_entry: string | null;
   prefill_birth_date_entry: string | null;
   prefill_group_entry: string | null;
+  prefill_address_entry: string | null;
+  dni_verification_enabled: boolean;
   google_form_id: string | null;
   google_form_watch_enabled: boolean;
   response_public_id_question_id: string | null;
@@ -51,6 +53,8 @@ export interface EditingForm {
   prefill_school_entry: string;
   prefill_birth_date_entry: string;
   prefill_group_entry: string;
+  prefill_address_entry: string;
+  dni_verification_enabled: boolean;
   google_form_id: string;
   google_form_edit_url: string;
   google_form_watch_enabled: boolean;
@@ -93,6 +97,7 @@ export interface PublicHomeForm {
   open_date: string | null;
   close_date: string | null;
   access_type: 'public' | 'restricted';
+  dni_verification_enabled?: boolean;
 };
 
 export interface PublicFormsResponse {
@@ -125,6 +130,70 @@ export interface StartPublicFormEmailAccessResponse {
   error?: string;
 }
 
+
+// --- Verificación de DNI ---------------------------------------------------
+
+export type DniSessionStatus =
+  | 'pending'
+  | 'capturing'
+  | 'front_uploaded'
+  | 'processing'
+  | 'extracted'
+  | 'confirmed'
+  | 'failed'
+  | 'expired';
+
+export interface DniExtractedData {
+  nombre: string | null;
+  numero: string | null;
+  domicilio_texto: string | null;
+  numero_valido?: boolean;
+  avisos?: string[];
+}
+
+export interface DniStartResponse {
+  ok: boolean;
+  session_id?: string;
+  desktop_token?: string;
+  mobile_url?: string;
+  expires_at?: string;
+  minor_without_dni?: boolean;
+  error?: string;
+  message?: string;
+}
+
+export interface DniStatusResponse {
+  ok: boolean;
+  status?: DniSessionStatus;
+  minor_without_dni?: boolean;
+  confirmed_at?: string | null;
+  expires_at?: string;
+  extracted?: DniExtractedData | null;
+  error?: string;
+}
+
+export interface DniSessionResponse {
+  ok: boolean;
+  status?: DniSessionStatus;
+  form_title?: string;
+  minor_without_dni?: boolean;
+  front_uploaded?: boolean;
+  back_uploaded?: boolean;
+  extracted?: DniExtractedData | null;
+  extraction_error?: string | null;
+  attempts?: number;
+  expires_at?: string;
+  error?: string;
+  message?: string;
+}
+
+export interface DniUploadResponse {
+  ok: boolean;
+  status?: DniSessionStatus;
+  extracted?: DniExtractedData | null;
+  error?: string;
+  message?: string;
+}
 
 export const toDatetimeLocalValue = (iso: string | null) => {
   if (!iso) return '';

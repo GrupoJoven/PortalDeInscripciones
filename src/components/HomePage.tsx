@@ -1,13 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { X, Mail, Lock, AlertCircle } from 'lucide-react';
+import { X, Mail, Lock, AlertCircle, ShieldCheck } from 'lucide-react';
 
 import { supabase } from '../lib/supabaseClient';
 import { isFormCurrentlyOpen } from '../types';
 import FormCard from './FormCard';
+import DniVerificationGate from './DniVerificationGate';
 
-import type { PublicHomeForm, PublicFormsResponse, StartPublicFormEmailAccessResponse } from '../types';
+import type {
+  PublicHomeForm,
+  PublicFormsResponse,
+  StartPublicFormEmailAccessResponse,
+  DniExtractedData,
+} from '../types';
 
 export default function HomePage() {
   const [publicId, setPublicId] = useState('');
@@ -24,6 +30,11 @@ export default function HomePage() {
   const [publicFormEmailInfo, setPublicFormEmailInfo] = useState('');
   const [submittingPublicFormEmail, setSubmittingPublicFormEmail] = useState(false);
 
+  // Verificación de DNI previa (solo en formularios de acceso libre que la exijan)
+  const [dniGateForm, setDniGateForm] = useState<PublicHomeForm | null>(null);
+  const [dniSessionToken, setDniSessionToken] = useState('');
+  const [dniExtracted, setDniExtracted] = useState<DniExtractedData | null>(null);
+
   const openPublicFormAccessModal = (form: PublicHomeForm) => {
     setSelectedPublicForm(form);
     setPublicFormEmail('');
@@ -31,12 +42,46 @@ export default function HomePage() {
     setPublicFormEmailInfo('');
   };
 
+  /**
+   * Los formularios con verificación de DNI pasan primero por el aviso y el
+   * QR; el resto van directamente al paso del correo electrónico.
+   */
+  const handleFormAccessClick = useCallback((form: PublicHomeForm) => {
+    if (form.dni_verification_enabled) {
+      setDniSessionToken('');
+      setDniExtracted(null);
+      setDniGateForm(form);
+      return;
+    }
+
+    setDniSessionToken('');
+    setDniExtracted(null);
+    openPublicFormAccessModal(form);
+  }, []);
+
+  const handleDniVerified = useCallback(
+    (desktopToken: string, extracted: DniExtractedData | null) => {
+      const form = dniGateForm;
+
+      setDniSessionToken(desktopToken);
+      setDniExtracted(extracted);
+      setDniGateForm(null);
+
+      if (form) {
+        openPublicFormAccessModal(form);
+      }
+    },
+    [dniGateForm],
+  );
+
   const closePublicFormAccessModal = () => {
     setSelectedPublicForm(null);
     setPublicFormEmail('');
     setPublicFormEmailError('');
     setPublicFormEmailInfo('');
     setSubmittingPublicFormEmail(false);
+    setDniSessionToken('');
+    setDniExtracted(null);
   };
 
   const handleSubmitPublicFormEmail = async (e: React.FormEvent) => {
@@ -68,6 +113,7 @@ export default function HomePage() {
           body: JSON.stringify({
             form_id: selectedPublicForm.id,
             email: cleanEmail,
+            ...(dniSessionToken ? { dni_session_token: dniSessionToken } : {}),
           }),
         }
       );
@@ -120,7 +166,7 @@ export default function HomePage() {
 
     const { data, error } = await supabase
       .from('registration_forms')
-      .select('id, title, description, url, circular_url, authorization_url, active, open_date, close_date, access_type')
+      .select('id, title, description, url, circular_url, authorization_url, active, open_date, close_date, access_type, dni_verification_enabled')
       .eq('access_type', 'public')
       .eq('active', true)
       .order('created_at', { ascending: false });
@@ -144,6 +190,7 @@ export default function HomePage() {
         open_date: form.open_date,
         close_date: form.close_date,
         access_type: form.access_type,
+        dni_verification_enabled: form.dni_verification_enabled ?? false,
       }));
 
     setPublicForms(normalized);
@@ -342,7 +389,7 @@ export default function HomePage() {
                 <FormCard
                     key={form.id}
                     form={form}
-                    onAccessClick={form.access_type === 'public' ? openPublicFormAccessModal : undefined}
+                    onAccessClick={form.access_type === 'public' ? handleFormAccessClick : undefined}
                   />
               ))}
             </motion.div>
@@ -383,7 +430,7 @@ export default function HomePage() {
                   <FormCard
                     key={form.id}
                     form={form}
-                    onAccessClick={form.access_type === 'public' ? openPublicFormAccessModal : undefined}
+                    onAccessClick={form.access_type === 'public' ? handleFormAccessClick : undefined}
                   />
                 ))}
               </motion.div>
@@ -417,6 +464,22 @@ export default function HomePage() {
                 {selectedPublicForm.title}
               </p>
             </div>
+
+            {dniSessionToken && (
+              <div className="mb-5 bg-green-50 border border-green-200 rounded-2xl p-4">
+                <div className="flex items-center gap-2 text-green-800 mb-2">
+                  <ShieldCheck className="w-4 h-4" />
+                  <span className="text-sm font-bold">DNI verificado</span>
+                </div>
+
+                <p className="text-xs text-green-700">
+                  Se rellenarán automáticamente en el formulario:
+                  {dniExtracted?.numero ? ' el DNI' : ''}
+                  {dniExtracted?.nombre ? ', el nombre' : ''}
+                  {dniExtracted?.domicilio_texto ? ' y el domicilio' : ''}.
+                </p>
+              </div>
+            )}
 
             <form onSubmit={handleSubmitPublicFormEmail} className="space-y-4">
               <div>
@@ -459,6 +522,14 @@ export default function HomePage() {
             </form>
           </motion.div>
         </div>
+      )}
+
+      {dniGateForm && (
+        <DniVerificationGate
+          form={dniGateForm}
+          onCancel={() => setDniGateForm(null)}
+          onVerified={handleDniVerified}
+        />
       )}
     </div>
   );

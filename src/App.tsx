@@ -14,6 +14,7 @@ import AdminPanel from './components/AdminPanel';
 import HomePage from './components/HomePage';
 import VerifyParentEmailPage from './components/VerifyParentEmailPage';
 import VerifyPublicFormEmailPage from './components/VerifyPublicFormEmailPage';
+import DniCapturePage from './components/DniCapturePage';
 
 import AppLayout from './layout/AppLayout';
 
@@ -136,6 +137,7 @@ export default function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/verify-parent-email" element={<VerifyParentEmailPage />} />
             <Route path="/verify-public-form-email" element={<VerifyPublicFormEmailPage />} />
+            <Route path="/verificacion-dni" element={<DniCapturePage />} />
             <Route
               path="/admin"
               element={

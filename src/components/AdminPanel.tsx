@@ -358,6 +358,8 @@ export default function AdminPanel({
       prefill_school_entry: '',
       prefill_birth_date_entry: '',
       prefill_group_entry: '',
+      prefill_address_entry: '',
+      dni_verification_enabled: false,
       google_form_id: '',
       google_form_edit_url: '',
       google_form_watch_enabled: true,
@@ -409,6 +411,8 @@ export default function AdminPanel({
       prefill_school_entry: form.prefill_school_entry ?? '',
       prefill_birth_date_entry: form.prefill_birth_date_entry ?? '',
       prefill_group_entry: form.prefill_group_entry ?? '',
+      prefill_address_entry: form.prefill_address_entry ?? '',
+      dni_verification_enabled: form.dni_verification_enabled ?? false,
       google_form_id: form.google_form_id ?? '',
       google_form_edit_url: form.google_form_id
         ? `https://docs.google.com/forms/d/${form.google_form_id}/edit`
@@ -481,6 +485,12 @@ export default function AdminPanel({
 
     if (editingForm.access_type === 'public') {
       nextForm.prefill_parent_email_entry = sourceForm.prefill_parent_email_entry ?? '';
+
+      if (editingForm.dni_verification_enabled) {
+        nextForm.prefill_dni_entry = sourceForm.prefill_dni_entry ?? '';
+        nextForm.prefill_name_entry = sourceForm.prefill_name_entry ?? '';
+        nextForm.prefill_address_entry = sourceForm.prefill_address_entry ?? '';
+      }
 
       if (editingForm.google_form_watch_enabled) {
         nextForm.response_parent_email_question_id =
@@ -625,6 +635,36 @@ export default function AdminPanel({
         setFormModalError('El identificador de Google Forms para "EMAIL DE CONTACTO" no es válido. Debe tener formato entry.123456789.');
         return;
       }
+
+      if (editingForm.dni_verification_enabled) {
+        const requiredDniFields: Array<{ label: string; value: string }> = [
+          { label: 'DNI', value: editingForm.prefill_dni_entry },
+          { label: 'NOMBRE COMPLETO', value: editingForm.prefill_name_entry },
+          {
+            label: 'DIRECCIÓN DE LA RESIDENCIA HABITUAL',
+            value: editingForm.prefill_address_entry,
+          },
+        ];
+
+        const missingDniField = requiredDniFields.find((field) => !field.value.trim());
+        if (missingDniField) {
+          setFormModalError(
+            `El identificador de Google Forms para "${missingDniField.label}" es obligatorio si activas la verificación de DNI.`
+          );
+          return;
+        }
+
+        const invalidDniField = requiredDniFields.find(
+          (field) => !isValidGoogleEntryKey(field.value)
+        );
+
+        if (invalidDniField) {
+          setFormModalError(
+            `El identificador de Google Forms para "${invalidDniField.label}" no es válido. Debe tener formato entry.123456789.`
+          );
+          return;
+        }
+      }
     }
 
     setSaving(true);
@@ -644,13 +684,25 @@ export default function AdminPanel({
             ? editingForm.prefill_public_id_entry.trim()
             : null,
       prefill_name_entry:
-        editingForm.access_type === 'restricted' && editingForm.prefill_name_entry.trim()
+        (editingForm.access_type === 'restricted' ||
+          (editingForm.access_type === 'public' && editingForm.dni_verification_enabled)) &&
+        editingForm.prefill_name_entry.trim()
           ? editingForm.prefill_name_entry.trim()
           : null,
       prefill_dni_entry:
-        editingForm.access_type === 'restricted' && editingForm.prefill_dni_entry.trim()
+        (editingForm.access_type === 'restricted' ||
+          (editingForm.access_type === 'public' && editingForm.dni_verification_enabled)) &&
+        editingForm.prefill_dni_entry.trim()
           ? editingForm.prefill_dni_entry.trim()
           : null,
+      prefill_address_entry:
+        editingForm.access_type === 'public' &&
+        editingForm.dni_verification_enabled &&
+        editingForm.prefill_address_entry.trim()
+          ? editingForm.prefill_address_entry.trim()
+          : null,
+      dni_verification_enabled:
+        editingForm.access_type === 'public' && editingForm.dni_verification_enabled,
       prefill_gender_entry:
         editingForm.access_type === 'restricted' && editingForm.prefill_gender_entry.trim()
           ? editingForm.prefill_gender_entry.trim()
@@ -1009,6 +1061,14 @@ export default function AdminPanel({
       editingForm.access_type === 'public' && editingForm.google_form_watch_enabled &&
       !editingForm.response_parent_email_question_id.trim()
     ) ||
+    (
+      editingForm.access_type === 'public' && editingForm.dni_verification_enabled &&
+      (
+        !editingForm.prefill_dni_entry.trim() ||
+        !editingForm.prefill_name_entry.trim() ||
+        !editingForm.prefill_address_entry.trim()
+      )
+    ) ||
 
     (
       editingForm.access_type === 'restricted' &&
@@ -1178,6 +1238,12 @@ export default function AdminPanel({
                       >
                         {form.access_type === 'public' ? 'Acceso libre' : 'Acceso limitado'}
                       </span>
+
+                      {form.dni_verification_enabled && (
+                        <span className="bg-amber-100 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                          Verificación de DNI
+                        </span>
+                      )}
                     </div>
 
                     <p className="text-slate-500 text-sm break-all mb-2">{form.url}</p>
@@ -1710,6 +1776,9 @@ export default function AdminPanel({
                           setEditingForm({
                             ...editingForm,
                             access_type: 'restricted',
+                            // La verificación de DNI solo existe en acceso libre.
+                            dni_verification_enabled: false,
+                            prefill_address_entry: '',
                           })
                         }}
                         className="w-5 h-5"
@@ -2141,6 +2210,107 @@ export default function AdminPanel({
                     </div>
                   </div>
                 )}
+                {editingForm.access_type === 'public' && (
+                  <div className="md:col-span-2">
+                    <label className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editingForm.dni_verification_enabled}
+                        onChange={(e) => {
+                          setCopySourceSelectorOpen(false);
+                          setEditingForm({
+                            ...editingForm,
+                            dni_verification_enabled: e.target.checked,
+                            ...(e.target.checked
+                              ? {}
+                              : {
+                                  prefill_dni_entry: '',
+                                  prefill_name_entry: '',
+                                  prefill_address_entry: '',
+                                }),
+                          });
+                        }}
+                        className="mt-1 w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <div className="font-bold text-sm text-slate-700">
+                          Verificación de DNI
+                        </div>
+                        <div className="text-sm text-slate-500">
+                          Si está activada, antes de abrir el formulario habrá que fotografiar el DNI del menor
+                          con el móvil (o el de un progenitor, si el menor tiene menos de 14 años y no dispone de DNI).
+                          El DNI, el nombre y el domicilio detectados se prerrellenan en el formulario.
+                          Las fotos se borran en cuanto se confirman los datos.
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+                )}
+
+                {editingForm.access_type === 'public' && editingForm.dni_verification_enabled && (
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-bold text-slate-700 mb-4">
+                      Campos de prerrelleno de la verificación de DNI
+                    </label>
+
+                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-4">
+                      <p className="text-sm text-amber-900">
+                        Introduce los identificadores <span className="font-mono font-bold">entry.XXXXXXXXX</span> de las
+                        preguntas que se rellenarán con los datos leídos del documento. Los tres son obligatorios.
+                        Si el menor no dispone de DNI y se verifica el de un progenitor, el
+                        <span className="font-semibold"> NOMBRE COMPLETO</span> se deja en blanco a propósito.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-600 mb-2">
+                          DNI
+                        </label>
+                        <input
+                          type="text"
+                          value={editingForm.prefill_dni_entry}
+                          onChange={(e) =>
+                            setEditingForm({ ...editingForm, prefill_dni_entry: e.target.value })
+                          }
+                          placeholder="entry.123456789"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-600 mb-2">
+                          NOMBRE COMPLETO
+                        </label>
+                        <input
+                          type="text"
+                          value={editingForm.prefill_name_entry}
+                          onChange={(e) =>
+                            setEditingForm({ ...editingForm, prefill_name_entry: e.target.value })
+                          }
+                          placeholder="entry.123456789"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                        />
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="block text-sm font-semibold text-slate-600 mb-2">
+                          DIRECCIÓN DE LA RESIDENCIA HABITUAL
+                        </label>
+                        <input
+                          type="text"
+                          value={editingForm.prefill_address_entry}
+                          onChange={(e) =>
+                            setEditingForm({ ...editingForm, prefill_address_entry: e.target.value })
+                          }
+                          placeholder="entry.123456789"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {editingForm.access_type === 'public' && editingForm.google_form_watch_enabled && (
                   <div className="md:col-span-2">
                     <label className="block text-sm font-bold text-slate-700 mb-4">

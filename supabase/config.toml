@@ -547,3 +547,33 @@ entrypoint = "./functions/send-public-id-reminders/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/send-public-id-reminders/*.html" ]
+
+[functions.dni-verification-start]
+enabled = true
+verify_jwt = false
+import_map = "./functions/dni-verification-start/deno.json"
+entrypoint = "./functions/dni-verification-start/index.ts"
+
+[functions.dni-verification-session]
+enabled = true
+verify_jwt = false
+import_map = "./functions/dni-verification-session/deno.json"
+entrypoint = "./functions/dni-verification-session/index.ts"
+
+[functions.dni-verification-upload]
+enabled = true
+verify_jwt = false
+import_map = "./functions/dni-verification-upload/deno.json"
+entrypoint = "./functions/dni-verification-upload/index.ts"
+
+[functions.dni-verification-confirm]
+enabled = true
+verify_jwt = false
+import_map = "./functions/dni-verification-confirm/deno.json"
+entrypoint = "./functions/dni-verification-confirm/index.ts"
+
+[functions.dni-verification-status]
+enabled = true
+verify_jwt = false
+import_map = "./functions/dni-verification-status/deno.json"
+entrypoint = "./functions/dni-verification-status/index.ts"
