@@ -22,10 +22,18 @@ type DocumentCameraProps = {
 const INTERVALO_ANALISIS = 140;
 
 /** Fotogramas correctos seguidos antes de habilitar el disparo. */
-const FOTOGRAMAS_ESTABLES = 4;
+const FOTOGRAMAS_ESTABLES = 3;
 
 /** Ancho del lienzo reducido donde se analiza cada fotograma. */
-const ANCHO_ANALISIS = 220;
+const ANCHO_ANALISIS = 320;
+
+/**
+ * Si el análisis lleva bloqueado este tiempo, se ofrece disparar igualmente.
+ * El comprobador es una ayuda, no un guardián: el servicio de OCR vuelve a
+ * detectar y recortar el documento por su cuenta, así que más vale una foto
+ * imperfecta que un usuario atrapado sin poder continuar.
+ */
+const MS_HASTA_FORZAR = 6000;
 
 /** Margen lateral del marco guía dentro del área de la cámara. */
 const MARGEN_MARCO = 0.06;
@@ -41,6 +49,7 @@ export default function DocumentCamera({
   const analysisCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const estableRef = useRef(0);
+  const bloqueadoDesdeRef = useRef<number | null>(null);
 
   const [analysis, setAnalysis] = useState<FrameAnalysis | null>(null);
   const [ready, setReady] = useState(false);
@@ -49,6 +58,8 @@ export default function DocumentCamera({
   const [torchOn, setTorchOn] = useState(false);
   const [torchAvailable, setTorchAvailable] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  const [puedeForzar, setPuedeForzar] = useState(false);
+  const [verDiagnostico, setVerDiagnostico] = useState(false);
   const [guide, setGuide] = useState<GuideRect>({
     x: MARGEN_MARCO,
     y: 0.25,
@@ -197,6 +208,19 @@ export default function DocumentCamera({
 
             estableRef.current = resultado.ok ? estableRef.current + 1 : 0;
             setStableCount(estableRef.current);
+
+            // Cuenta cuánto tiempo llevamos sin poder disparar, para ofrecer
+            // la captura manual si el análisis se atasca.
+            if (estableRef.current >= FOTOGRAMAS_ESTABLES) {
+              bloqueadoDesdeRef.current = null;
+              setPuedeForzar(false);
+            } else {
+              bloqueadoDesdeRef.current ??= Date.now();
+
+              if (Date.now() - bloqueadoDesdeRef.current > MS_HASTA_FORZAR) {
+                setPuedeForzar(true);
+              }
+            }
           }
         }
       }
@@ -370,17 +394,49 @@ export default function DocumentCamera({
           ))}
         </div>
 
-        {/* Aviso de encuadre */}
-        <div className="absolute left-0 right-0 bottom-4 px-4 pointer-events-none">
-          <div
-            className={`mx-auto max-w-xs text-center text-sm font-semibold px-4 py-2.5 rounded-full backdrop-blur ${
+        {/* Aviso de encuadre. Al tocarlo se ven los números, por si hay que
+            diagnosticar por qué no se desbloquea el botón. */}
+        <div className="absolute left-0 right-0 bottom-4 px-4">
+          <button
+            type="button"
+            onClick={() => setVerDiagnostico((v) => !v)}
+            className={`block mx-auto max-w-xs text-center text-sm font-semibold px-4 py-2.5 rounded-full backdrop-blur ${
               puedeCapturar
                 ? 'bg-green-500/90 text-white'
                 : 'bg-slate-900/75 text-white'
             }`}
           >
             {!ready ? 'Abriendo la cámara...' : analysis?.message ?? 'Buscando el documento...'}
-          </div>
+          </button>
+
+          {verDiagnostico && analysis && (
+            <div className="mx-auto mt-2 max-w-xs rounded-2xl bg-slate-900/85 px-4 py-3 text-[11px] font-mono text-slate-100 backdrop-blur">
+              <div className="flex justify-between">
+                <span>detalle dentro</span>
+                <span>{analysis.metrics.detalleDentro.toFixed(1)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>detalle fuera</span>
+                <span>{analysis.metrics.detalleFuera.toFixed(1)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>nitidez</span>
+                <span>{analysis.metrics.nitidez.toFixed(0)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>luz</span>
+                <span>{analysis.metrics.luz.toFixed(0)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>reflejo</span>
+                <span>{(analysis.metrics.reflejo * 100).toFixed(1)}%</span>
+              </div>
+              <div className="mt-1.5 border-t border-slate-700 pt-1.5 flex justify-between">
+                <span>motivo</span>
+                <span>{analysis.issue ?? 'ninguno'}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {torchAvailable && (
@@ -414,6 +470,19 @@ export default function DocumentCamera({
         )}
         {puedeCapturar ? 'Hacer la foto' : 'Ajusta el encuadre'}
       </button>
+
+      {/* Salida de emergencia: si el comprobador no se pone verde, el usuario
+          nunca debe quedarse atrapado. El OCR recorta el documento igualmente. */}
+      {puedeForzar && !puedeCapturar && (
+        <button
+          type="button"
+          onClick={capturar}
+          disabled={capturing}
+          className="w-full py-3 rounded-2xl font-semibold text-sm bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 transition-all disabled:opacity-60"
+        >
+          Hacer la foto igualmente
+        </button>
+      )}
     </div>
   );
 }

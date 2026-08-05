@@ -306,22 +306,33 @@ Con el formulario de prueba abierto y un DNI a mano:
 2. Debe salir el aviso de verificación de DNI con la casilla del menor sin DNI.
    Déjala **sin marcar** para esta primera prueba.
 3. Pulsa **Aceptar y continuar**. Aparece el código QR.
-4. Escanéalo con la cámara del móvil.
-5. En el móvil: pulsa **Empezar**, apoya el DNI sobre una superficie lisa y de
+4. **Antes de escanear**, comprueba de paso que `APP_BASE_URL` es correcta:
+   debajo del QR hay un enlace que pone "Abre la verificación en este mismo
+   dispositivo". Pasa el ratón por encima sin pulsar y mira abajo a la
+   izquierda del navegador: ahí sale la URL completa que lleva el QR. El
+   dominio debe ser el de este portal.
+5. Escanéalo con la cámara del móvil.
+6. En el móvil: pulsa **Empezar**, apoya el DNI sobre una superficie lisa y de
    color uniforme (una mesa oscura va bien) y encájalo en el marco.
    - El marco se pone **verde** y el botón se activa solo cuando la foto vale.
-   - Si no se pone verde, el mensaje de abajo te dice por qué: "Acerca un poco
-     más el documento", "Evita los reflejos", "Mantén el móvil quieto"...
-6. Primero el anverso (la cara de la foto), después el reverso (la del
+   - Si no se pone verde, el mensaje de abajo te dice por qué: "Encaja el
+     documento dentro del marco", "Evita los reflejos", "Mantén el móvil
+     quieto"...
+   - **Si aun así no se desbloquea**, a los 6 segundos aparece un segundo
+     botón, **"Hacer la foto igualmente"**. Úsalo sin problema: el servicio de
+     OCR vuelve a detectar y recortar el documento por su cuenta.
+   - Tocando el mensaje de aviso se despliegan los números que está midiendo
+     el comprobador, por si hace falta afinarlo.
+7. Primero el anverso (la cara de la foto), después el reverso (la del
    domicilio).
-7. Sale la pantalla con el nombre, el DNI y el domicilio detectados.
+8. Sale la pantalla con el nombre, el DNI y el domicilio detectados.
    Si algo está mal, **Repetir anverso** o **Repetir reverso**: se repite solo
    esa cara, la otra se conserva.
-8. Pulsa **Los datos son correctos**.
-9. Vuelve al ordenador: debe haber avanzado solo a la pantalla del correo
+9. Pulsa **Los datos son correctos**.
+10. Vuelve al ordenador: debe haber avanzado solo a la pantalla del correo
    electrónico, con un recuadro verde de "DNI verificado".
-10. Escribe tu correo y continúa.
-11. Se abre el formulario de Google con el DNI, el nombre y la dirección ya
+11. Escribe tu correo y continúa.
+12. Se abre el formulario de Google con el DNI, el nombre y la dirección ya
     rellenados.
 
 ### Segunda prueba: menor sin DNI
@@ -362,6 +373,7 @@ select cron.schedule(
 | Se queda en "Leyendo el documento..." un minuto y falla | Render estaba dormido | Vuelve a intentarlo enseguida; para producción, plan de pago |
 | Lee el DNI pero el formulario sale vacío | Faltan las dos funciones modificadas del paso 6 | Redespliega `start-public-form-email-access` y `verify-public-form-email-token` |
 | Los datos leídos salen con errores raros | `"spanish":false` en `/health` | El paquete de español no se instaló; avísame |
+| El marco nunca se pone verde | Umbrales del comprobador de encuadre | Espera 6 s y usa **"Hacer la foto igualmente"**. Para diagnosticarlo, toca el mensaje de aviso: se despliegan los números que está midiendo |
 | "Este formulario requiere verificar el DNI... Vuelve a empezar" | La sesión caducó (30 min) | Vuelve a generar el QR |
 
 Para ver qué está pasando por dentro:

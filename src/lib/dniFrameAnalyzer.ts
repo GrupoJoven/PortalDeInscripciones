@@ -2,15 +2,26 @@
  * Análisis en tiempo real de los fotogramas de la cámara para decidir si la
  * foto del documento va a servir antes de dispararla.
  *
- * Todo en JS puro sobre un lienzo reducido (~220 px de ancho), así que el
+ * Todo en JS puro sobre un lienzo reducido (~320 px de ancho), así que el
  * coste por fotograma es despreciable incluso en móviles antiguos.
  *
  * Comprobaciones:
- *   1. Encuadre  - se detecta la tarjeta por diferencia con el color del fondo
- *                  y se compara su recuadro con el marco guía.
- *   2. Nitidez   - varianza del laplaciano (detecta trepidación y desenfoque).
- *   3. Luz       - luminancia media dentro del marco.
- *   4. Reflejos  - proporción de píxeles quemados.
+ *   1. Luz       - luminancia media dentro del marco.
+ *   2. Encuadre  - se compara la cantidad de detalle DENTRO del marco con la
+ *                  de un anillo justo por fuera.
+ *   3. Reflejos  - proporción de píxeles quemados.
+ *   4. Nitidez   - varianza del laplaciano (detecta trepidación y desenfoque).
+ *
+ * Sobre el encuadre: la primera versión estimaba el color del fondo a partir
+ * de los bordes del fotograma y marcaba como "documento" cualquier píxel que
+ * se diferenciara de él. Era demasiado frágil: una sombra o un degradado de
+ * luz sobre la mesa bastaba para que casi todo el fotograma contase como
+ * documento y siempre pareciera salirse del marco. Ahora solo se mira la zona
+ * inmediatamente pegada al marco, que es lo único que de verdad importa.
+ *
+ * Aun así, esto es una ayuda, no un guardián: el pipeline de Python vuelve a
+ * detectar y recortar el documento por su cuenta. Por eso la interfaz permite
+ * disparar igualmente si el análisis se atasca.
  */
 
 /** Proporción del formato ID-1: 85,60 x 53,98 mm. */
@@ -26,32 +37,32 @@ export interface GuideRect {
 
 export type FrameIssue =
   | 'no_document'
-  | 'too_far'
   | 'out_of_frame'
-  | 'off_center'
   | 'blurry'
   | 'too_dark'
   | 'too_bright'
   | 'glare';
 
+export interface FrameMetrics {
+  /** Detalle (gradiente medio) dentro del marco. El DNI tiene mucho. */
+  detalleDentro: number;
+  /** Detalle en el anillo justo por fuera del marco. La mesa tiene poco. */
+  detalleFuera: number;
+  nitidez: number;
+  luz: number;
+  reflejo: number;
+}
+
 export interface FrameAnalysis {
   ok: boolean;
   issue: FrameIssue | null;
   message: string;
-  metrics: {
-    coverage: number;
-    overflow: number;
-    sharpness: number;
-    brightness: number;
-    glare: number;
-  };
+  metrics: FrameMetrics;
 }
 
 const MENSAJES: Record<FrameIssue, string> = {
-  no_document: 'Coloca el documento dentro del marco',
-  too_far: 'Acerca un poco más el documento',
+  no_document: 'Encaja el documento dentro del marco',
   out_of_frame: 'El documento se sale del marco',
-  off_center: 'Centra el documento en el marco',
   blurry: 'Mantén el móvil quieto para enfocar',
   too_dark: 'Hace falta más luz',
   too_bright: 'Hay demasiada luz, aléjate del foco',
@@ -61,18 +72,26 @@ const MENSAJES: Record<FrameIssue, string> = {
 export const MENSAJE_CORRECTO = 'Encuadre correcto, ya puedes hacer la foto';
 
 // --- Umbrales -------------------------------------------------------------
-// Ajustados a mano sobre fotos de DNI en interiores; son deliberadamente
-// tolerantes: es mejor dejar pasar una foto regular que bloquear al usuario.
+// Deliberadamente permisivos: una foto regular que el OCR sabe arreglar es
+// mucho mejor que un usuario bloqueado sin poder disparar.
 const UMBRALES = {
-  coberturaMinima: 0.72,   // del área del marco que debe ocupar el documento
-  desbordeMaximo: 0.14,    // cuánto puede sobresalir del marco
-  descentradoMaximo: 0.13, // desplazamiento del centro respecto al del marco
-  nitidezMinima: 42,       // varianza del laplaciano
-  luzMinima: 55,
-  luzMaxima: 218,
-  reflejoMaximo: 0.055,    // proporción de píxeles > 248
-  areaMascaraMinima: 0.05, // por debajo, no hay documento a la vista
+  /** Por debajo, dentro del marco no hay nada con aspecto de documento. */
+  detalleMinimoDentro: 3.5,
+  /** El anillo exterior solo delata desbordamiento si tiene tanto detalle
+   *  como el interior y además es alto en términos absolutos. */
+  detalleFueraAbsoluto: 5.0,
+  proporcionFueraDentro: 0.85,
+  nitidezMinima: 18,
+  luzMinima: 45,
+  luzMaxima: 232,
+  reflejoMaximo: 0.09,
 };
+
+/** Cuánto se mete hacia dentro la zona analizada, respecto al marco. */
+const MARGEN_INTERIOR = 0.06;
+
+/** Ancho del anillo exterior, en proporción al tamaño del marco. */
+const ANCHO_ANILLO = 0.08;
 
 /**
  * Recorta la zona visible del vídeo (equivalente a object-fit: cover) y la
@@ -146,14 +165,20 @@ export function guideRectToVideoCrop(
   };
 }
 
+interface Region {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 export function analyzeFrame(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
   guide: GuideRect,
 ): FrameAnalysis {
-  const imagen = ctx.getImageData(0, 0, width, height);
-  const { data } = imagen;
+  const { data } = ctx.getImageData(0, 0, width, height);
 
   const luma = new Float32Array(width * height);
 
@@ -161,27 +186,47 @@ export function analyzeFrame(
     luma[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
   }
 
-  const marco = {
+  const marco: Region = {
     x0: Math.round(guide.x * width),
     y0: Math.round(guide.y * height),
     x1: Math.round((guide.x + guide.width) * width),
     y1: Math.round((guide.y + guide.height) * height),
   };
 
-  const metricasLuz = medirLuz(luma, width, marco);
-  const nitidez = medirNitidez(luma, width, marco);
-  const encuadre = medirEncuadre(data, width, height, marco);
+  const anchoMarco = marco.x1 - marco.x0;
+  const altoMarco = marco.y1 - marco.y0;
 
-  const metrics = {
-    coverage: encuadre.cobertura,
-    overflow: encuadre.desborde,
-    sharpness: nitidez,
-    brightness: metricasLuz.media,
-    glare: metricasLuz.reflejo,
+  // Zona interior: el marco metido un poco hacia dentro, para no contar el
+  // propio borde de la tarjeta como si fuera detalle del documento.
+  const interior: Region = {
+    x0: marco.x0 + anchoMarco * MARGEN_INTERIOR,
+    y0: marco.y0 + altoMarco * MARGEN_INTERIOR,
+    x1: marco.x1 - anchoMarco * MARGEN_INTERIOR,
+    y1: marco.y1 - altoMarco * MARGEN_INTERIOR,
   };
 
-  // El orden importa: primero lo que impide siquiera ver el documento.
-  const issue = detectarProblema(encuadre, metricasLuz, nitidez);
+  // Anillo exterior: banda pegada al marco por fuera, recortada al lienzo.
+  const exterior: Region = {
+    x0: Math.max(0, marco.x0 - anchoMarco * ANCHO_ANILLO),
+    y0: Math.max(0, marco.y0 - altoMarco * ANCHO_ANILLO),
+    x1: Math.min(width, marco.x1 + anchoMarco * ANCHO_ANILLO),
+    y1: Math.min(height, marco.y1 + altoMarco * ANCHO_ANILLO),
+  };
+
+  const luz = medirLuz(luma, width, interior);
+  const nitidez = medirNitidez(luma, width, interior);
+  const detalleDentro = medirDetalle(luma, width, interior, null);
+  const detalleFuera = medirDetalle(luma, width, exterior, marco);
+
+  const metrics: FrameMetrics = {
+    detalleDentro,
+    detalleFuera,
+    nitidez,
+    luz: luz.media,
+    reflejo: luz.reflejo,
+  };
+
+  const issue = detectarProblema(metrics);
 
   return {
     ok: issue === null,
@@ -191,39 +236,41 @@ export function analyzeFrame(
   };
 }
 
-function detectarProblema(
-  encuadre: ReturnType<typeof medirEncuadre>,
-  luz: ReturnType<typeof medirLuz>,
-  nitidez: number,
-): FrameIssue | null {
-  if (luz.media < UMBRALES.luzMinima) return 'too_dark';
-  if (luz.media > UMBRALES.luzMaxima) return 'too_bright';
+function detectarProblema(m: FrameMetrics): FrameIssue | null {
+  // Primero lo que impide ver siquiera el documento.
+  if (m.luz < UMBRALES.luzMinima) return 'too_dark';
+  if (m.luz > UMBRALES.luzMaxima) return 'too_bright';
 
-  if (encuadre.areaMascara < UMBRALES.areaMascaraMinima) return 'no_document';
-  if (encuadre.desborde > UMBRALES.desbordeMaximo) return 'out_of_frame';
-  if (encuadre.descentrado > UMBRALES.descentradoMaximo) return 'off_center';
-  if (encuadre.cobertura < UMBRALES.coberturaMinima) return 'too_far';
+  if (m.detalleDentro < UMBRALES.detalleMinimoDentro) return 'no_document';
 
-  if (luz.reflejo > UMBRALES.reflejoMaximo) return 'glare';
-  if (nitidez < UMBRALES.nitidezMinima) return 'blurry';
+  // Solo damos por desbordado el documento si por fuera del marco hay tanto
+  // detalle como por dentro. Un fondo liso apenas tiene, así que esto no se
+  // dispara con sombras ni con degradados de luz.
+  if (
+    m.detalleFuera > UMBRALES.detalleFueraAbsoluto &&
+    m.detalleFuera > m.detalleDentro * UMBRALES.proporcionFueraDentro
+  ) {
+    return 'out_of_frame';
+  }
+
+  if (m.reflejo > UMBRALES.reflejoMaximo) return 'glare';
+  if (m.nitidez < UMBRALES.nitidezMinima) return 'blurry';
 
   return null;
 }
 
-interface Marco {
-  x0: number;
-  y0: number;
-  x1: number;
-  y1: number;
-}
+function medirLuz(luma: Float32Array, width: number, region: Region) {
+  const x0 = Math.max(0, Math.floor(region.x0));
+  const y0 = Math.max(0, Math.floor(region.y0));
+  const x1 = Math.floor(region.x1);
+  const y1 = Math.floor(region.y1);
 
-function medirLuz(luma: Float32Array, width: number, marco: Marco) {
   let suma = 0;
   let quemados = 0;
   let total = 0;
 
-  for (let y = marco.y0; y < marco.y1; y += 2) {
-    for (let x = marco.x0; x < marco.x1; x += 2) {
+  for (let y = y0; y < y1; y += 2) {
+    for (let x = x0; x < x1; x += 2) {
       const valor = luma[y * width + x];
       suma += valor;
       if (valor > 248) quemados += 1;
@@ -236,22 +283,69 @@ function medirLuz(luma: Float32Array, width: number, marco: Marco) {
   return { media: suma / total, reflejo: quemados / total };
 }
 
+/**
+ * Gradiente medio de una región: alto donde hay texto, fotografía o bordes;
+ * casi cero en una superficie lisa, aunque esté en sombra o mal iluminada.
+ *
+ * Si se pasa `excluir`, los píxeles dentro de ese rectángulo se ignoran, que
+ * es como se obtiene el anillo exterior.
+ */
+function medirDetalle(
+  luma: Float32Array,
+  width: number,
+  region: Region,
+  excluir: Region | null,
+) {
+  const x0 = Math.max(1, Math.floor(region.x0));
+  const y0 = Math.max(1, Math.floor(region.y0));
+  const x1 = Math.min(width - 1, Math.floor(region.x1));
+  const y1 = Math.min(luma.length / width - 1, Math.floor(region.y1));
+
+  let suma = 0;
+  let total = 0;
+
+  for (let y = y0; y < y1; y += 2) {
+    for (let x = x0; x < x1; x += 2) {
+      if (
+        excluir &&
+        x >= excluir.x0 &&
+        x < excluir.x1 &&
+        y >= excluir.y0 &&
+        y < excluir.y1
+      ) {
+        continue;
+      }
+
+      const i = y * width + x;
+
+      const dx = Math.abs(luma[i + 1] - luma[i - 1]);
+      const dy = Math.abs(luma[i + width] - luma[i - width]);
+
+      suma += dx + dy;
+      total += 1;
+    }
+  }
+
+  return total === 0 ? 0 : suma / total;
+}
+
 /** Varianza del laplaciano 3x3: cuanto más alta, más nítida es la imagen. */
-function medirNitidez(luma: Float32Array, width: number, marco: Marco) {
+function medirNitidez(luma: Float32Array, width: number, region: Region) {
+  const x0 = Math.max(1, Math.floor(region.x0));
+  const y0 = Math.max(1, Math.floor(region.y0));
+  const x1 = Math.min(width - 1, Math.floor(region.x1));
+  const y1 = Math.min(luma.length / width - 1, Math.floor(region.y1));
+
   let suma = 0;
   let sumaCuadrados = 0;
   let total = 0;
 
-  for (let y = marco.y0 + 1; y < marco.y1 - 1; y += 1) {
-    for (let x = marco.x0 + 1; x < marco.x1 - 1; x += 1) {
-      const centro = luma[y * width + x];
+  for (let y = y0; y < y1; y += 1) {
+    for (let x = x0; x < x1; x += 1) {
+      const i = y * width + x;
 
       const laplaciano =
-        4 * centro -
-        luma[(y - 1) * width + x] -
-        luma[(y + 1) * width + x] -
-        luma[y * width + x - 1] -
-        luma[y * width + x + 1];
+        4 * luma[i] - luma[i - width] - luma[i + width] - luma[i - 1] - luma[i + 1];
 
       suma += laplaciano;
       sumaCuadrados += laplaciano * laplaciano;
@@ -263,130 +357,4 @@ function medirNitidez(luma: Float32Array, width: number, marco: Marco) {
 
   const media = suma / total;
   return sumaCuadrados / total - media * media;
-}
-
-/**
- * Separa documento y fondo por distancia de color respecto al borde de la
- * imagen (misma idea que el pipeline de Python, simplificada) y compara el
- * recuadro resultante con el marco guía.
- */
-function medirEncuadre(
-  data: Uint8ClampedArray,
-  width: number,
-  height: number,
-  marco: Marco,
-) {
-  const fondo = estimarColorFondo(data, width, height);
-
-  // Umbral adaptativo: suficiente para separar una tarjeta clara sobre mesa
-  // oscura y viceversa, sin disparar con sombras suaves.
-  const umbral = 46;
-
-  let minX = width;
-  let minY = height;
-  let maxX = -1;
-  let maxY = -1;
-  let pixelesDocumento = 0;
-  let muestras = 0;
-
-  for (let y = 0; y < height; y += 2) {
-    for (let x = 0; x < width; x += 2) {
-      const i = (y * width + x) * 4;
-
-      const distancia =
-        Math.abs(data[i] - fondo.r) +
-        Math.abs(data[i + 1] - fondo.g) +
-        Math.abs(data[i + 2] - fondo.b);
-
-      muestras += 1;
-
-      if (distancia > umbral) {
-        pixelesDocumento += 1;
-
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-
-  const areaMascara = muestras > 0 ? pixelesDocumento / muestras : 0;
-
-  if (maxX < 0 || maxY < 0) {
-    return { cobertura: 0, desborde: 0, descentrado: 0, areaMascara: 0 };
-  }
-
-  const anchoMarco = marco.x1 - marco.x0;
-  const altoMarco = marco.y1 - marco.y0;
-
-  // Solape entre el recuadro detectado y el marco guía.
-  const solapeAncho = Math.max(0, Math.min(maxX, marco.x1) - Math.max(minX, marco.x0));
-  const solapeAlto = Math.max(0, Math.min(maxY, marco.y1) - Math.max(minY, marco.y0));
-
-  const areaSolape = solapeAncho * solapeAlto;
-  const areaMarco = anchoMarco * altoMarco;
-  const areaDetectada = (maxX - minX) * (maxY - minY);
-
-  const cobertura = areaMarco > 0 ? areaSolape / areaMarco : 0;
-  const desborde = areaDetectada > 0 ? 1 - areaSolape / areaDetectada : 0;
-
-  const centroDetectadoX = (minX + maxX) / 2;
-  const centroDetectadoY = (minY + maxY) / 2;
-  const centroMarcoX = (marco.x0 + marco.x1) / 2;
-  const centroMarcoY = (marco.y0 + marco.y1) / 2;
-
-  const descentrado = Math.max(
-    Math.abs(centroDetectadoX - centroMarcoX) / anchoMarco,
-    Math.abs(centroDetectadoY - centroMarcoY) / altoMarco,
-  );
-
-  return { cobertura, desborde, descentrado, areaMascara };
-}
-
-/** Color mediano de una banda estrecha en los cuatro bordes del fotograma. */
-function estimarColorFondo(data: Uint8ClampedArray, width: number, height: number) {
-  const grosor = Math.max(2, Math.round(Math.min(width, height) * 0.05));
-
-  const rojos: number[] = [];
-  const verdes: number[] = [];
-  const azules: number[] = [];
-
-  const muestrear = (x: number, y: number) => {
-    const i = (y * width + x) * 4;
-    rojos.push(data[i]);
-    verdes.push(data[i + 1]);
-    azules.push(data[i + 2]);
-  };
-
-  for (let y = 0; y < grosor; y += 1) {
-    for (let x = 0; x < width; x += 3) {
-      muestrear(x, y);
-      muestrear(x, height - 1 - y);
-    }
-  }
-
-  for (let x = 0; x < grosor; x += 1) {
-    for (let y = 0; y < height; y += 3) {
-      muestrear(x, y);
-      muestrear(width - 1 - x, y);
-    }
-  }
-
-  return {
-    r: mediana(rojos),
-    g: mediana(verdes),
-    b: mediana(azules),
-  };
-}
-
-function mediana(valores: number[]) {
-  if (valores.length === 0) return 0;
-
-  const ordenados = valores.slice().sort((a, b) => a - b);
-  const medio = Math.floor(ordenados.length / 2);
-
-  return ordenados.length % 2 === 0
-    ? (ordenados[medio - 1] + ordenados[medio]) / 2
-    : ordenados[medio];
 }
