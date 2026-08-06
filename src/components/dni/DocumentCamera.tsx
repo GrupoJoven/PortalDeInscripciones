@@ -6,6 +6,7 @@ import {
   analyzeFrame,
   drawVisibleRegion,
   guideRectToVideoCrop,
+  nitidezDeLienzo,
   type FrameAnalysis,
   type GuideRect,
 } from '../../lib/dniFrameAnalyzer';
@@ -308,6 +309,46 @@ export default function DocumentCamera({
     return { fuente: video, ancho: video.videoWidth, alto: video.videoHeight };
   };
 
+  /** Dibuja el recorte del marco a partir de una fuente, a máxima resolución. */
+  const recortarMarco = (
+    fuente: CanvasImageSource,
+    anchoFuente: number,
+    video: HTMLVideoElement,
+    contenedor: HTMLDivElement,
+  ): HTMLCanvasElement | null => {
+    const { sx, sy, sw, sh } = guideRectToVideoCrop(
+      video,
+      contenedor.clientWidth,
+      contenedor.clientHeight,
+      guide,
+    );
+
+    const factor = anchoFuente / video.videoWidth;
+
+    const rw = sw * factor;
+    const rh = sh * factor;
+
+    // Se conserva la resolución disponible hasta 2200 px. El servicio de OCR
+    // la normaliza después, pero necesita detalle real: las etiquetas del
+    // documento miden ~1,2 mm y por debajo de ~1500 px de ancho de tarjeta
+    // quedan demasiado pequeñas para leerse.
+    const anchoDestino = Math.min(2200, Math.round(rw));
+
+    if (anchoDestino < 10) return null;
+
+    const lienzo = document.createElement('canvas');
+    lienzo.width = anchoDestino;
+    lienzo.height = Math.round((anchoDestino * rh) / rw);
+
+    const ctx = lienzo.getContext('2d');
+    if (!ctx) return null;
+
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(fuente, sx * factor, sy * factor, rw, rh, 0, 0, lienzo.width, lienzo.height);
+
+    return lienzo;
+  };
+
   const capturar = async () => {
     const video = videoRef.current;
     const contenedor = containerRef.current;
@@ -317,45 +358,41 @@ export default function DocumentCamera({
     setCapturing(true);
 
     try {
+      // Siempre se prepara el fotograma de vídeo, que es lo que el usuario ha
+      // visto y lo que el comprobador de encuadre ha dado por bueno.
+      const desdeVideo = recortarMarco(video, video.videoWidth, video, contenedor);
+
+      if (!desdeVideo) return;
+
+      let elegido = desdeVideo;
+
+      // La foto del sensor tiene más resolución, pero puede salir movida o
+      // sin enfocar: `takePhoto()` no siempre espera al autoenfoque. Se
+      // compara la nitidez de ambas y se usa la mejor.
       const { fuente, ancho } = await obtenerFuenteDeCaptura(video);
 
-      // El recorte se calcula sobre el vídeo y se escala a la resolución real
-      // de la fuente, que puede ser mayor.
-      const { sx, sy, sw, sh } = guideRectToVideoCrop(
-        video,
-        contenedor.clientWidth,
-        contenedor.clientHeight,
-        guide,
-      );
+      if (fuente !== video) {
+        const desdeSensor = recortarMarco(fuente, ancho, video, contenedor);
+        (fuente as ImageBitmap).close();
 
-      const factor = ancho / video.videoWidth;
+        if (desdeSensor) {
+          const nitidezVideo = nitidezDeLienzo(desdeVideo);
+          const nitidezSensor = nitidezDeLienzo(desdeSensor);
 
-      const rx = sx * factor;
-      const ry = sy * factor;
-      const rw = sw * factor;
-      const rh = sh * factor;
+          console.info(
+            `[DNI] Nitidez -> vídeo ${nitidezVideo.toFixed(0)} (${desdeVideo.width}px), ` +
+              `sensor ${nitidezSensor.toFixed(0)} (${desdeSensor.width}px)`,
+          );
 
-      // Se conserva la resolución disponible hasta 2200 px. El servicio de
-      // OCR la normaliza después, pero necesita detalle real: las etiquetas
-      // del documento miden ~1,2 mm y por debajo de ~1500 px de ancho de
-      // tarjeta quedan demasiado pequeñas para leerse.
-      const anchoDestino = Math.min(2200, Math.round(rw));
-      const altoDestino = Math.round((anchoDestino * rh) / rw);
+          // Se exige que la del sensor sea claramente mejor para preferirla:
+          // ante la duda, la que el usuario ha visto y validado.
+          if (nitidezSensor > nitidezVideo * 0.9) {
+            elegido = desdeSensor;
+          }
+        }
+      }
 
-      const lienzo = document.createElement('canvas');
-      lienzo.width = anchoDestino;
-      lienzo.height = altoDestino;
-
-      const ctx = lienzo.getContext('2d');
-
-      if (!ctx) return;
-
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(fuente, rx, ry, rw, rh, 0, 0, anchoDestino, altoDestino);
-
-      if (fuente !== video) (fuente as ImageBitmap).close();
-
-      const dataUrl = lienzo.toDataURL('image/jpeg', 0.92);
+      const dataUrl = elegido.toDataURL('image/jpeg', 0.92);
       const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
 
       onCapture(base64, dataUrl);

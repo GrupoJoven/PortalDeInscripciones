@@ -455,6 +455,35 @@ function medirDetalle(
 }
 
 /** Varianza del laplaciano 3x3: cuanto más alta, más nítida es la imagen. */
+/**
+ * Nitidez de una imagen completa, para comparar dos candidatas a la misma
+ * foto. Se normaliza el tamaño porque una imagen más grande tiene más detalle
+ * de alta frecuencia y saldría favorecida sin serlo de verdad.
+ */
+export function nitidezDeLienzo(lienzo: HTMLCanvasElement): number {
+  const ANCHO = 700;
+  const alto = Math.max(1, Math.round((ANCHO * lienzo.height) / lienzo.width));
+
+  const medida = document.createElement('canvas');
+  medida.width = ANCHO;
+  medida.height = alto;
+
+  const ctx = medida.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return 0;
+
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(lienzo, 0, 0, ANCHO, alto);
+
+  const { data } = ctx.getImageData(0, 0, ANCHO, alto);
+  const luma = new Float32Array(ANCHO * alto);
+
+  for (let i = 0, p = 0; i < data.length; i += 4, p += 1) {
+    luma[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  }
+
+  return medirNitidez(luma, ANCHO, { x0: 1, y0: 1, x1: ANCHO - 1, y1: alto - 1 });
+}
+
 function medirNitidez(luma: Float32Array, width: number, region: Region) {
   const x0 = Math.max(1, Math.floor(region.x0));
   const y0 = Math.max(1, Math.floor(region.y0));

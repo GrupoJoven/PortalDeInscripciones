@@ -181,7 +181,18 @@ Cada pasada cuesta ~1 s en un servidor normal y hasta 10 s en una instancia
 compartida de 0,1 CPU, así que el tiempo total depende casi por completo de
 cuántas veces se llame a Tesseract. El objetivo es **3 o 4 por documento**.
 
-Lo que lo mantiene bajo:
+Dos ajustes de Tesseract que valen la mitad del tiempo:
+
+- `-c tessedit_do_invert=0`: por defecto Tesseract repite el reconocimiento
+  sobre la imagen invertida, por si el texto fuera claro sobre fondo oscuro.
+  En un DNI nunca lo es. **Ahorra ~30 %.**
+- `OMP_THREAD_LIMIT=1` (en el Dockerfile): Tesseract usa OpenMP, pero en una
+  instancia con una fracción de CPU los hilos se estorban entre sí y va más
+  lento con varios que con uno. **Ahorra otro ~30 %.**
+
+Medido sobre una imagen de 1700x1072: 0,57 s → 0,28 s.
+
+Lo demás que lo mantiene bajo:
 
 - Se prueban como mucho dos segmentaciones (`--psm 4` y `--psm 11`) y se corta
   en cuanto una reconoce dos etiquetas del documento.

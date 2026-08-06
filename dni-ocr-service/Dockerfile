@@ -2,7 +2,10 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    # Tesseract usa OpenMP; en una instancia con una fracción de CPU los
+    # hilos se estorban y va bastante más lento. Con uno solo va ~30 % mejor.
+    OMP_THREAD_LIMIT=1
 
 # tesseract-ocr-spa: paquete de idioma español, imprescindible para el DNI.
 # libgl1 / libglib2.0-0: dependencias nativas de OpenCV.

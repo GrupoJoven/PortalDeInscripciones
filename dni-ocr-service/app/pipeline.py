@@ -101,9 +101,23 @@ def idioma_disponible() -> str:
 
 IDIOMA_OCR = idioma_disponible()
 
-CONFIGURACIONES_OCR = tuple(
-    rf"--oem 3 --psm {psm} -l {IDIOMA_OCR}" for psm in PSM_A_PROBAR
-)
+# Tesseract, por defecto, repite el reconocimiento sobre la imagen invertida
+# por si el texto fuera claro sobre fondo oscuro. En un DNI nunca lo es, así
+# que es trabajo duplicado: desactivarlo ahorra ~30 % del tiempo.
+OPCIONES_VELOCIDAD = "-c tessedit_do_invert=0"
+
+# OpenMP reparte el trabajo entre hilos, pero en una instancia con una
+# fracción de CPU los hilos se pelean entre sí y va más lento. Limitarlo a uno
+# ahorra otro ~30 %. Se fija también en el Dockerfile; aquí por si el servicio
+# se ejecuta fuera del contenedor.
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+
+
+def config_ocr(psm: int) -> str:
+    return f"--oem 3 --psm {psm} -l {IDIOMA_OCR} {OPCIONES_VELOCIDAD}"
+
+
+CONFIGURACIONES_OCR = tuple(config_ocr(psm) for psm in PSM_A_PROBAR)
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +170,7 @@ def ocr_con_posiciones(
     imagen: np.ndarray,
     configuraciones: tuple[str, ...] | None = None,
     puntuacion_suficiente: float = PUNTUACION_SUFICIENTE,
+    deadline: float | None = None,
 ) -> tuple[str, list["LineaOCR"]]:
     """Ejecuta OCR y devuelve el texto y las líneas con sus coordenadas.
 
@@ -178,6 +193,12 @@ def ocr_con_posiciones(
     errores = 0
 
     for config in configuraciones:
+        # Cada pasada puede costar decenas de segundos en una instancia lenta,
+        # así que se comprueba el tiempo ANTES de empezarla, no después.
+        if _sin_tiempo(deadline) and mejor_texto:
+            logger.warning("Sin tiempo para más configuraciones de OCR")
+            break
+
         try:
             datos = pytesseract.image_to_data(
                 imagen, config=config, output_type=pytesseract.Output.DICT
@@ -250,7 +271,8 @@ def _puntuar_texto_ocr(texto: str) -> float:
 CONFIG_MRZ = (
     "--oem 3 --psm 6 "
     "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789< "
-    "-c load_system_dawg=0 -c load_freq_dawg=0"
+    "-c load_system_dawg=0 -c load_freq_dawg=0 "
+    "-c tessedit_do_invert=0"
 )
 
 VALORES_MRZ = {**{str(d): d for d in range(10)}, "<": 0}
@@ -815,10 +837,7 @@ def _leer_zona(imagen: np.ndarray, deadline: float | None = None) -> list[LineaO
     segmentación y el domicilio se pierde; en el anverso, la fotografía del
     titular estorba de forma parecida.
     """
-    intentos = (
-        (imagen, "--oem 3 --psm 4 -l " + IDIOMA_OCR),
-        (None, "--oem 3 --psm 6 -l " + IDIOMA_OCR),
-    )
+    intentos = ((imagen, config_ocr(4)), (None, config_ocr(6)))
 
     mejores: list[LineaOCR] = []
 
@@ -1432,13 +1451,14 @@ def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
     """Hace el OCR de una cara. No decide todavía si es anverso o reverso."""
     recorte = _preparar_para_ocr(imagen)
 
-    texto, lineas = ocr_con_posiciones(recorte)
+    texto, lineas = ocr_con_posiciones(recorte, deadline=deadline)
 
     # Si el OCR en color va flojo, reintentar con la versión binarizada.
     if _puntuar_texto_ocr(texto) < 100 and not _sin_tiempo(deadline):
         texto_binario, lineas_binario = ocr_con_posiciones(
             preprocesar_recorte_para_ocr(recorte),
             configuraciones=CONFIGURACIONES_OCR[:1],
+            deadline=deadline,
         )
         if _puntuar_texto_ocr(texto_binario) > _puntuar_texto_ocr(texto):
             texto, lineas = texto_binario, lineas_binario
@@ -1448,6 +1468,12 @@ def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
         for e in ("APELLIDOS", "NOMBRE", "SEXO", "NACIONALIDAD", "DOMICILIO", "IDESP")
         if e in texto.upper()
     ]
+
+    # La nitidez se registra para poder relacionar los fallos con la calidad
+    # de la foto. Muchas líneas con muy pocos caracteres delata una foto
+    # movida: Tesseract ve manchas de texto pero no resuelve las letras.
+    gris = cv2.cvtColor(recorte, cv2.COLOR_BGR2GRAY)
+    nitidez = float(cv2.Laplacian(gris, cv2.CV_64F).var())
 
     # Sin etiquetas y con la foto por debajo de lo necesario, el problema es
     # de resolución de captura, no del reconocimiento.
@@ -1459,14 +1485,26 @@ def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
             ANCHO_OCR,
         )
 
+    caracteres_por_linea = len(texto) / len(lineas) if lineas else 0
+
     logger.info(
-        "Cara leída: %dx%d, %d líneas, %d caracteres, etiquetas=%s",
+        "Cara leída: %dx%d, %d líneas, %d caracteres (%.1f por línea), "
+        "nitidez=%.0f, etiquetas=%s",
         recorte.shape[1],
         recorte.shape[0],
         len(lineas),
         len(texto),
+        caracteres_por_linea,
+        nitidez,
         etiquetas or "ninguna",
     )
+
+    if lineas and caracteres_por_linea < 6 and not etiquetas:
+        logger.warning(
+            "Muchas líneas con poquísimo texto y ninguna etiqueta: "
+            "la foto parece movida o desenfocada (nitidez=%.0f)",
+            nitidez,
+        )
 
     return CaraLeida(recorte=recorte, texto=texto, lineas=lineas)
 
@@ -1657,6 +1695,15 @@ def extraer_datos(
         avisos.append("No se ha podido leer el domicilio.")
     if numero is None:
         avisos.append("No se ha podido leer el número de DNI.")
+
+    # Si no se ha reconocido ninguna etiqueta en ninguna cara, el problema es
+    # la foto, no el reconocimiento: merece un aviso que se entienda.
+    if max(puntuaciones) <= 0 and not (nombre or domicilio):
+        avisos.append(
+            "Las fotos han salido movidas o desenfocadas. "
+            "Apoya el documento en una superficie firme y espera a que la "
+            "imagen se vea nítida antes de disparar."
+        )
 
     domicilio_texto = formatear_domicilio(domicilio)
 
