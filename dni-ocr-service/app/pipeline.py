@@ -38,10 +38,22 @@ LETRAS_CONTROL = "TRWAGMYFPDXBNJZSQVHLCKE"
 # normal y hasta 10 s en una instancia compartida de 0,1 CPU, así que el
 # número de pasadas es LO que determina si la petición termina a tiempo.
 #
-# --psm 4 (una columna de tamaños variables) va primero porque además de leer
-# bien agrupa las líneas de forma utilizable, que es lo que necesita la
-# extracción por posición. --psm 11 (texto disperso) queda como respaldo.
-PSM_A_PROBAR = (4, 11)
+# --psm 3 es el análisis de página completamente automático y el valor POR
+# DEFECTO de Tesseract. Es el que usaba el pipeline original, aunque no lo
+# pareciera: su cadena de configuración (`r'l spa - psm 11'`) no tiene el
+# formato que espera Tesseract, que la ignoraba entera y caía en los valores
+# por defecto. Y funcionaba.
+#
+# Medido sobre una tarjeta a dos columnas:
+#
+#     psm  3  ->  4 etiquetas reconocidas
+#     psm  4  ->  4 etiquetas
+#     psm  6  ->  4 etiquetas, pero pierde el domicilio
+#     psm 11  ->  3 etiquetas, pierde NOMBRE      <- el peor
+#
+# psm 11 (texto disperso) no hace análisis de estructura, que es justo lo que
+# necesita un documento con fotografía a un lado y campos al otro.
+PSM_A_PROBAR = (3, 4)
 
 # Puntuación a partir de la cual no merece la pena probar más configuraciones:
 # equivale a haber reconocido 2 etiquetas del documento.
@@ -113,11 +125,31 @@ OPCIONES_VELOCIDAD = "-c tessedit_do_invert=0"
 os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 
-def config_ocr(psm: int) -> str:
-    return f"--oem 3 --psm {psm} -l {IDIOMA_OCR} {OPCIONES_VELOCIDAD}"
+def config_ocr(psm: int, idioma: str | None = None) -> str:
+    return f"--oem 3 --psm {psm} -l {idioma or IDIOMA_OCR} {OPCIONES_VELOCIDAD}"
 
 
-CONFIGURACIONES_OCR = tuple(config_ocr(psm) for psm in PSM_A_PROBAR)
+def _configuraciones() -> tuple[str, ...]:
+    """Orden en que se prueban las configuraciones de Tesseract.
+
+    Primero español, que es lo correcto para un documento español. Pero si de
+    ahí no sale nada se reintenta en inglés, porque es con lo que el pipeline
+    original funcionaba sobre DNI reales: al ignorarse su cadena de
+    configuración, corría con el idioma por defecto. El modelo de idioma
+    influye en cómo se resuelven los caracteres dudosos, y en la tipografía
+    condensada de las etiquetas eso se nota.
+    """
+    configuraciones = [config_ocr(PSM_A_PROBAR[0])]
+
+    if IDIOMA_OCR != "eng":
+        configuraciones.append(config_ocr(PSM_A_PROBAR[0], "eng"))
+
+    configuraciones.append(config_ocr(PSM_A_PROBAR[1]))
+
+    return tuple(configuraciones)
+
+
+CONFIGURACIONES_OCR = _configuraciones()
 
 
 # ---------------------------------------------------------------------------
@@ -474,17 +506,19 @@ def leer_mrz(imagen_reverso: np.ndarray, deadline: float | None = None) -> dict:
 # ---------------------------------------------------------------------------
 
 def extraer_nombre_completo(texto: str) -> str | None:
+    # Sin `\b` de cierre: Tesseract pega letras sueltas al final de las
+    # etiquetas ("SEXOQ", "NOMBRE|") y con el límite de palabra no casaban.
     patron_apellidos = re.compile(
-        r"\bAPELLIDOS\b[^\r\n]*[\r\n]+"
+        r"\bAPELLIDOS[^\r\n]*[\r\n]+"
         r"(?P<apellidos>.*?)"
-        r"(?=\s*\bNOMBRE\b)",
+        r"(?=\s*\bNOMBRE)",
         re.IGNORECASE | re.DOTALL,
     )
 
     patron_nombre = re.compile(
-        r"\bNOMBRE\b[^\r\n]*[\r\n]+"
+        r"\bNOMBRE[^\r\n]*[\r\n]+"
         r"(?P<nombre>.*?)"
-        r"(?=\s*\bSEXO\b)",
+        r"(?=\s*\bSEXO)",
         re.IGNORECASE | re.DOTALL,
     )
 
@@ -516,18 +550,22 @@ class LineaOCR:
 # En los DNI recientes las etiquetas van en español e inglés
 # ("APELLIDOS / SURNAME"), así que se contemplan ambas.
 
+# Ojo con los límites de palabra al final: Tesseract pega letras sueltas a las
+# etiquetas con bastante frecuencia ("SEXOQ" en lugar de "SEXO", medido). Un
+# `\bSEXO\b` no casa con eso y tira abajo toda la extracción, así que solo se
+# ancla el principio de la palabra.
 ETIQUETA_APELLIDOS = re.compile(
-    r"\bAPELLIDOS?\b|\bSURNAMES?\b|PRIMER\s+APELLIDO", re.IGNORECASE
+    r"\bAPELLIDOS?|\bSURNAMES?|PRIMER\s+APELLIDO", re.IGNORECASE
 )
 
 ETIQUETA_NOMBRE = re.compile(
-    r"\bNOMBRE\b|\bGIVEN\s+NAMES?\b|\bNAME\b", re.IGNORECASE
+    r"\bNOMBRE|\bGIVEN\s+NAMES?|\bNAME\b", re.IGNORECASE
 )
 
 # Lo que viene después del nombre en el anverso: marca dónde termina.
 ETIQUETA_TRAS_NOMBRE = re.compile(
-    r"\bSEXO\b|\bSEX\b|\bNACIONALIDAD\b|\bNATIONALITY\b|\bFECHA\b|"
-    r"\bVALIDEZ\b|\bNACIM|\bIDESP\b|\bSOPORTE\b|\bDNI\b",
+    r"\bSEXO|\bSEX\b|\bNACIONALIDAD|\bNATIONALITY|\bFECHA|"
+    r"\bVALIDEZ|\bNACIM|\bIDESP|\bSOPORTE|\bDNI\b",
     re.IGNORECASE,
 )
 

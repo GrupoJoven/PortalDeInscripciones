@@ -308,13 +308,28 @@ python3 test_nombre.py     # nombre por posición, incluido un nombre muy largo
 python3 test_encuadres.py  # imagen recortada, con fondo, de lejos, inclinada
 python3 test_zonas.py      # domicilio con el MRZ compitiendo por la atención
 python3 test_plausibilidad.py  # descarta lecturas ilegibles
+python3 test_etiquetas_rotas.py  # tolerancia a "SEXOQ" y demás deformaciones
 ```
 
 ## Cambios respecto al código original
 
-- **Configuración de Tesseract corregida.** El original pasaba
-  `r'l spa - psm 11'`; Tesseract espera `-l spa --psm 11`, así que la versión
-  anterior estaba ignorando tanto el idioma como el modo de segmentación.
+- **Configuración de Tesseract.** El original pasaba `r'l spa - psm 11'`.
+  Tesseract espera `-l spa --psm 11`, así que **ignoraba la cadena entera** y
+  corría con sus valores por defecto: `--psm 3` e inglés.
+
+  Lo importante: *eso funcionaba*. `--psm 3` es el análisis de página
+  completamente automático, el único que hace un reparto en bloques decente de
+  un documento con fotografía a un lado y campos al otro. Medido:
+
+  | modo | etiquetas reconocidas |
+  | --- | --- |
+  | `--psm 3` (por defecto) | 4 |
+  | `--psm 4` | 4 |
+  | `--psm 6` | 4, pero pierde el domicilio |
+  | `--psm 11` | 3, pierde NOMBRE |
+
+  Así que se usa `--psm 3`, y el idioma se prueba primero en español y luego
+  en inglés, que es con lo que el original funcionaba sobre DNI reales.
 - **Varias pasadas de OCR, pero solo si hacen falta.** Se prueban `--psm 11`,
   `6` y `4` en ese orden y se corta en cuanto una reconoce suficientes
   etiquetas. Recorrerlas siempre triplicaba el tiempo sin mejorar nada.
