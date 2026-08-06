@@ -54,11 +54,22 @@ PRESUPUESTO_SEGUNDOS = float(os.environ.get("DNI_OCR_PRESUPUESTO_SEGUNDOS", 70))
 
 # Ancho al que se normaliza el recorte antes del OCR.
 #
-# Medido: por debajo de ~1300 px Tesseract empieza a perder las etiquetas
-# pequeñas del documento ("NACIONALIDAD", "APELLIDOS"...), y al perderlas ya no
-# se alcanza PUNTUACION_SUFICIENTE, así que se acaban probando las tres
-# configuraciones y encima el resultado es peor: más lento y menos preciso.
-ANCHO_OCR = 1500
+# Las etiquetas del DNI ("APELLIDOS", "NOMBRE"...) miden en torno a 1,2 mm.
+# Sobre una tarjeta de 85,6 mm de ancho:
+#
+#     ancho    px/mm    alto de una etiqueta de 1,2 mm
+#     ------   -----    ------------------------------
+#      950      11,1     13 px   ilegible
+#     1500      17,5     21 px   justo
+#     1700      19,9     24 px   cómodo
+#
+# Tesseract necesita 20-30 px de alto para leer con fiabilidad, así que por
+# debajo de ~1500 px se pierden las etiquetas; y sin etiquetas no se alcanza
+# PUNTUACION_SUFICIENTE, con lo que además se prueban todas las
+# configuraciones: más lento y peor resultado.
+#
+# Ampliar una imagen pequeña no sirve: hace falta detalle real en la foto.
+ANCHO_OCR = 1700
 
 
 def idioma_disponible() -> str:
@@ -640,6 +651,92 @@ def _limpiar_nombre(valor: str) -> str:
     return normalizar_espacios(limpio)
 
 
+def _tokens(valor: str) -> list[str]:
+    return [t for t in re.split(r"[\s\-]+", valor.upper()) if len(t) >= 3]
+
+
+def _coinciden(uno: str, otro: str) -> bool:
+    """Dos palabras se refieren a lo mismo aunque una venga cortada."""
+    return uno.startswith(otro[:4]) or otro.startswith(uno[:4])
+
+
+def componer_nombre_con_mrz(lineas: list[str], mrz: dict) -> str | None:
+    """Ordena unas líneas sueltas del anverso usando el MRZ como plantilla.
+
+    Cuando Tesseract no lee la etiqueta NOMBRE (son diminutas, y en los DNI
+    recientes van en dos idiomas) quedan las líneas de valores sin saber
+    cuáles son apellidos y cuál el nombre.
+
+    El MRZ del reverso sí distingue ambas cosas, aunque las trunque a 30
+    caracteres. Sirve entonces de plantilla: dice qué es cada línea, y el
+    texto completo se toma del anverso.
+    """
+    apellidos_mrz = _tokens(mrz.get("apellidos") or "")
+    nombre_mrz = _tokens(mrz.get("nombre") or "")
+
+    if not apellidos_mrz or not nombre_mrz:
+        return None
+
+    apellidos: list[str] = []
+    nombres: list[str] = []
+
+    for linea in lineas:
+        tokens = _tokens(linea)
+
+        if not tokens:
+            continue
+
+        puntos_apellido = sum(
+            1 for t in tokens if any(_coinciden(t, m) for m in apellidos_mrz)
+        )
+        puntos_nombre = sum(1 for t in tokens if any(_coinciden(t, m) for m in nombre_mrz))
+
+        if puntos_apellido > puntos_nombre:
+            apellidos.append(linea)
+        elif puntos_nombre > puntos_apellido:
+            nombres.append(linea)
+
+    if not apellidos or not nombres:
+        return None
+
+    compuesto = f"{' '.join(nombres)} {' '.join(apellidos)}"
+
+    logger.info("Nombre recompuesto con la plantilla del MRZ")
+
+    return _limpiar_nombre(compuesto)
+
+
+def extraer_bloque_nombre(lineas: list[LineaOCR]) -> tuple[str | None, list[str]]:
+    """Devuelve (nombre completo, líneas candidatas sin clasificar).
+
+    Si se encuentran las dos etiquetas, el nombre sale directamente. Si solo
+    aparece APELLIDOS, se devuelven las líneas de valores para que quien llame
+    las ordene con ayuda del MRZ.
+    """
+    nombre = extraer_nombre_por_posicion(lineas)
+
+    if nombre:
+        return nombre, []
+
+    etiqueta_apellidos = next(
+        (l for l in lineas if ETIQUETA_APELLIDOS.search(l.texto)), None
+    )
+
+    if etiqueta_apellidos is None:
+        return None, []
+
+    limite = None
+
+    for linea in lineas:
+        if linea.y0 > etiqueta_apellidos.y1 and ETIQUETA_TRAS_NOMBRE.search(linea.texto):
+            limite = linea.y0
+            break
+
+    candidatas = _valores_en_franja(lineas, etiqueta_apellidos, limite, maximo=4)
+
+    return None, [_limpiar_nombre(c) for c in candidatas if _limpiar_nombre(c)]
+
+
 def extraer_nombre_por_posicion(lineas: list[LineaOCR]) -> str | None:
     """Lee nombre y apellidos del anverso usando la posición de las etiquetas.
 
@@ -1049,14 +1146,19 @@ def _borde_uniforme(imagen: np.ndarray, umbral: float = 14.0) -> bool:
     return float(banda.std()) < umbral
 
 
-def _ya_viene_recortada(imagen: np.ndarray, tolerancia: float = 0.05) -> bool:
+def _ya_viene_recortada(imagen: np.ndarray, tolerancia: float = 0.08) -> bool:
     """¿La imagen es ya prácticamente solo la tarjeta?
 
     La página de captura recorta exactamente al marco guía, que tiene la
-    proporción del DNI, así que lo que llega del móvil ya viene recortado.
+    proporción del DNI, así que en la práctica todo lo que llega del móvil
+    entra por aquí y la detección de contorno ni se usa.
 
-    No basta con la proporción: una foto con fondo puede dar por casualidad
-    una proporción parecida. Se exige además que el borde no sea un fondo liso.
+    Basta con la proporción: las cámaras dan 4:3 (1,33) o 16:9 (1,78), nunca
+    la del DNI (1,59), así que una foto sin recortar no se confunde con una
+    recortada. Y si la imagen ya tiene forma de tarjeta, lo más probable con
+    diferencia es que sea la tarjeta: buscar un contorno dentro solo puede
+    llevar a quedarse con un trozo (la fotografía del titular, un bloque de
+    texto) y perderlo todo.
     """
     alto, ancho = imagen.shape[:2]
 
@@ -1065,10 +1167,7 @@ def _ya_viene_recortada(imagen: np.ndarray, tolerancia: float = 0.05) -> bool:
 
     proporcion = max(alto, ancho) / min(alto, ancho)
 
-    if abs(proporcion - PROPORCION_DNI) > tolerancia:
-        return False
-
-    return not _borde_uniforme(imagen)
+    return abs(proporcion - PROPORCION_DNI) <= tolerancia
 
 
 def _recorte_creible(recorte: np.ndarray, imagen: np.ndarray) -> bool:
@@ -1085,26 +1184,29 @@ def _recorte_creible(recorte: np.ndarray, imagen: np.ndarray) -> bool:
 
     proporcion = max(alto, ancho) / min(alto, ancho)
 
-    if abs(proporcion - PROPORCION_DNI) > 0.28:
+    if abs(proporcion - PROPORCION_DNI) > 0.20:
         logger.info("Recorte descartado: proporción %.2f lejos de %.2f", proporcion, PROPORCION_DNI)
         return False
 
-    # Solo se pone tope por arriba: si el recorte "crece" respecto al original
-    # es que la corrección de perspectiva ha deformado la imagen, que es
-    # justo el fallo que dejaba a Tesseract sin poder leer.
-    #
-    # No se pone mínimo: una foto hecha de lejos da un recorte pequeño y
-    # perfectamente válido. Quien descarta los falsos positivos es la
-    # comprobación de la proporción, porque un fragmento de tarjeta (un bloque
-    # de texto, la fotografía) no tiene la forma de un DNI.
     area_original = imagen.shape[0] * imagen.shape[1]
     proporcion_area = (alto * ancho) / area_original if area_original else 0
 
+    # Si el recorte "crece" respecto al original, la corrección de perspectiva
+    # ha deformado la imagen: es el fallo que dejaba a Tesseract sin leer.
     if proporcion_area > 1.10:
         logger.info(
             "Recorte descartado: la corrección de perspectiva lo ha agrandado al %.0f%%",
             100 * proporcion_area,
         )
+        return False
+
+    # Aquí solo se llega con imágenes que NO tienen forma de tarjeta, es decir,
+    # con fondo alrededor. Una foto hecha de lejos da un recorte legítimamente
+    # pequeño, así que el mínimo es holgado: quien descarta los falsos
+    # positivos es la comprobación de la proporción, porque un fragmento de
+    # tarjeta no tiene la forma de un DNI.
+    if proporcion_area < 0.04:
+        logger.info("Recorte descartado: ocupa solo el %.1f%%", 100 * proporcion_area)
         return False
 
     return True
@@ -1192,6 +1294,11 @@ class ResultadoCara:
     domicilio: dict | None = None
     texto: str = ""
     avisos: list[str] = field(default_factory=list)
+    # Líneas del anverso que parecen nombre o apellidos pero que no se han
+    # podido clasificar por faltar la etiqueta NOMBRE.
+    lineas_nombre: list[str] = field(default_factory=list)
+    # Datos del MRZ del reverso, para poder ordenar esas líneas.
+    mrz: dict | None = None
 
 
 @dataclass
@@ -1240,6 +1347,16 @@ def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
         if e in texto.upper()
     ]
 
+    # Sin etiquetas y con la foto por debajo de lo necesario, el problema es
+    # de resolución de captura, no del reconocimiento.
+    if not etiquetas and recorte.shape[1] < ANCHO_OCR * 0.9:
+        logger.warning(
+            "Ninguna etiqueta reconocida y la foto solo tiene %d px de ancho: "
+            "hacen falta ~%d px para que las etiquetas del documento se lean",
+            recorte.shape[1],
+            ANCHO_OCR,
+        )
+
     logger.info(
         "Cara leída: %dx%d, %d líneas, %d caracteres, etiquetas=%s",
         recorte.shape[1],
@@ -1263,7 +1380,7 @@ def extraer_de_cara(
     if es_anverso:
         # Primero por posición (etiquetas APELLIDOS y NOMBRE con sus líneas
         # debajo); si no, la expresión regular original.
-        nombre = extraer_nombre_por_posicion(lineas)
+        nombre, candidatas = extraer_bloque_nombre(lineas)
 
         if not nombre:
             nombre = extraer_nombre_completo(texto)
@@ -1273,6 +1390,7 @@ def extraer_de_cara(
             numero=extraer_dni_anverso(texto),
             nombre=nombre,
             texto=texto,
+            lineas_nombre=candidatas,
         )
 
     # Reverso: el domicilio se busca primero por posición (etiqueta DOMICILIO
@@ -1306,6 +1424,7 @@ def extraer_de_cara(
         nombre=nombre,
         domicilio=domicilio,
         texto=texto,
+        mrz=mrz,
     )
 
 
@@ -1396,6 +1515,16 @@ def extraer_datos(
     # El nombre se lee del anverso, que es donde aparece completo. El del MRZ
     # (reverso) solo llega aquí si se pudo garantizar que no venía truncado.
     nombre = next((c.nombre for c in delanteras if c.nombre), None)
+
+    # Si faltó la etiqueta NOMBRE en el anverso, se ordenan sus líneas con el
+    # MRZ del reverso como plantilla: el MRZ dice qué es apellido y qué es
+    # nombre, y el texto completo se toma del anverso.
+    if not nombre:
+        candidatas = next((c.lineas_nombre for c in delanteras if c.lineas_nombre), [])
+        mrz = next((c.mrz for c in traseras if c.mrz), None)
+
+        if candidatas and mrz:
+            nombre = componer_nombre_con_mrz(candidatas, mrz)
 
     if not nombre:
         nombre = next((c.nombre for c in traseras if c.nombre), None)

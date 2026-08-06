@@ -65,14 +65,32 @@ CARD = tarjeta()
 ALTO, ANCHO = CARD.shape[:2]
 
 
-def con_fondo(margen_x: int, margen_y: int, tono: int = 52) -> np.ndarray:
-    fondo = np.full((ALTO + margen_y * 2, ANCHO + margen_x * 2, 3), tono, np.uint8)
-    fondo[margen_y : margen_y + ALTO, margen_x : margen_x + ANCHO] = CARD
+def con_fondo(escala: float, tono: int = 52) -> np.ndarray:
+    """Coloca la tarjeta centrada sobre un lienzo 4:3.
+
+    Se usa 4:3 y no un margen proporcional porque es lo que dan las cámaras
+    reales. Una foto sin recortar nunca tiene la proporción del DNI (1,59),
+    y de eso depende que el pipeline sepa si debe buscar el documento o si
+    la imagen ya es el documento.
+    """
+    ancho = int(ANCHO / escala)
+    alto = int(ancho * 3 / 4)
+
+    if alto < ALTO:
+        alto = int(ALTO / escala)
+        ancho = int(alto * 4 / 3)
+
+    fondo = np.full((alto, ancho, 3), tono, np.uint8)
+
+    x = (ancho - ANCHO) // 2
+    y = (alto - ALTO) // 2
+    fondo[y : y + ALTO, x : x + ANCHO] = CARD
+
     return fondo
 
 
 def inclinada(grados: float = 7) -> np.ndarray:
-    fondo = con_fondo(200, 200)
+    fondo = con_fondo(0.75)
     matriz = cv2.getRotationMatrix2D(
         (fondo.shape[1] / 2, fondo.shape[0] / 2), grados, 1.0
     )
@@ -83,9 +101,9 @@ def inclinada(grados: float = 7) -> np.ndarray:
 
 CASOS = [
     ("Recortada al marco (lo que manda el móvil)", CARD),
-    ("Sobre una mesa, margen normal", con_fondo(140, 140)),
-    ("Sobre una mesa, mucho margen (foto de lejos)", con_fondo(ANCHO // 2, ALTO // 2)),
-    ("Sobre una mesa clara", con_fondo(160, 120, 205)),
+    ("Sobre una mesa, margen normal", con_fondo(0.8)),
+    ("Sobre una mesa, mucho margen (foto de lejos)", con_fondo(0.45)),
+    ("Sobre una mesa clara", con_fondo(0.8, 205)),
     ("Sobre una mesa, ligeramente inclinada", inclinada()),
 ]
 

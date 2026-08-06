@@ -109,11 +109,15 @@ export default function DocumentCamera({
       }
 
       try {
+        // Se pide toda la resolución posible. Las etiquetas del DNI miden
+        // ~1,2 mm: con un flujo de 1080p el recorte del marco sale a unos
+        // 950 px de ancho y esas etiquetas quedan en 13 px de alto, por
+        // debajo de lo que Tesseract puede leer. Hacen falta ~1900 px.
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
+            width: { ideal: 3840 },
+            height: { ideal: 2160 },
           },
           audio: false,
         });
@@ -138,6 +142,12 @@ export default function DocumentCamera({
         setTorchAvailable(Boolean(capabilities?.torch));
         setReady(true);
         recalcularMarco();
+
+        const ajustes = track?.getSettings?.();
+        console.info(
+          `[DNI] Cámara: ${ajustes?.width ?? '?'}x${ajustes?.height ?? '?'}`,
+          `(máximo del dispositivo: ${capabilities?.width?.max ?? '?'}x${capabilities?.height?.max ?? '?'})`,
+        );
       } catch (error) {
         console.error(error);
 
@@ -255,7 +265,50 @@ export default function DocumentCamera({
   };
 
   // --- Captura ------------------------------------------------------------
-  const capturar = () => {
+  /**
+   * Intenta una foto a resolución de cámara, no de vista previa.
+   *
+   * `takePhoto()` usa el sensor completo (varios megapíxeles) en lugar del
+   * flujo de vídeo, que suele ir a 1080p. Solo se acepta si conserva la misma
+   * proporción que el vídeo: si el móvil devuelve la foto en otro formato, el
+   * marco guía ya no se correspondería con lo que ve el usuario.
+   */
+  const obtenerFuenteDeCaptura = async (
+    video: HTMLVideoElement,
+  ): Promise<{ fuente: CanvasImageSource; ancho: number; alto: number }> => {
+    const track = streamRef.current?.getVideoTracks()[0];
+
+    const CapturaDeImagen = (
+      window as unknown as {
+        ImageCapture?: new (t: MediaStreamTrack) => { takePhoto: () => Promise<Blob> };
+      }
+    ).ImageCapture;
+
+    if (track && CapturaDeImagen) {
+      try {
+        const captura = new CapturaDeImagen(track);
+        const bitmap = await createImageBitmap(await captura.takePhoto());
+
+        const proporcionFoto = bitmap.width / bitmap.height;
+        const proporcionVideo = video.videoWidth / video.videoHeight;
+
+        if (
+          Math.abs(proporcionFoto - proporcionVideo) < 0.03 &&
+          bitmap.width > video.videoWidth
+        ) {
+          return { fuente: bitmap, ancho: bitmap.width, alto: bitmap.height };
+        }
+
+        bitmap.close();
+      } catch {
+        // Muchos navegadores no lo permiten; se usa el fotograma de vídeo.
+      }
+    }
+
+    return { fuente: video, ancho: video.videoWidth, alto: video.videoHeight };
+  };
+
+  const capturar = async () => {
     const video = videoRef.current;
     const contenedor = containerRef.current;
 
@@ -264,6 +317,10 @@ export default function DocumentCamera({
     setCapturing(true);
 
     try {
+      const { fuente, ancho } = await obtenerFuenteDeCaptura(video);
+
+      // El recorte se calcula sobre el vídeo y se escala a la resolución real
+      // de la fuente, que puede ser mayor.
       const { sx, sy, sw, sh } = guideRectToVideoCrop(
         video,
         contenedor.clientWidth,
@@ -271,10 +328,19 @@ export default function DocumentCamera({
         guide,
       );
 
-      // El servicio de OCR normaliza el recorte a 1500 px de ancho, así que
-      // mandar más resolución solo engorda la subida desde datos móviles.
-      const anchoDestino = Math.min(1500, Math.round(sw));
-      const altoDestino = Math.round((anchoDestino * sh) / sw);
+      const factor = ancho / video.videoWidth;
+
+      const rx = sx * factor;
+      const ry = sy * factor;
+      const rw = sw * factor;
+      const rh = sh * factor;
+
+      // Se conserva la resolución disponible hasta 2200 px. El servicio de
+      // OCR la normaliza después, pero necesita detalle real: las etiquetas
+      // del documento miden ~1,2 mm y por debajo de ~1500 px de ancho de
+      // tarjeta quedan demasiado pequeñas para leerse.
+      const anchoDestino = Math.min(2200, Math.round(rw));
+      const altoDestino = Math.round((anchoDestino * rh) / rw);
 
       const lienzo = document.createElement('canvas');
       lienzo.width = anchoDestino;
@@ -282,14 +348,14 @@ export default function DocumentCamera({
 
       const ctx = lienzo.getContext('2d');
 
-      if (!ctx) {
-        setCapturing(false);
-        return;
-      }
+      if (!ctx) return;
 
-      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, anchoDestino, altoDestino);
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(fuente, rx, ry, rw, rh, 0, 0, anchoDestino, altoDestino);
 
-      const dataUrl = lienzo.toDataURL('image/jpeg', 0.86);
+      if (fuente !== video) (fuente as ImageBitmap).close();
+
+      const dataUrl = lienzo.toDataURL('image/jpeg', 0.92);
       const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
 
       onCapture(base64, dataUrl);
@@ -300,6 +366,23 @@ export default function DocumentCamera({
 
   const puedeCapturar = ready && !cameraError && stableCount >= FOTOGRAMAS_ESTABLES;
   const estadoOk = analysis?.ok ?? false;
+
+  /** Ancho en píxeles reales que tendrá la foto del documento. */
+  const anchoRecorte = (() => {
+    const video = videoRef.current;
+    const contenedor = containerRef.current;
+
+    if (!video?.videoWidth || !contenedor?.clientWidth) return 0;
+
+    return Math.round(
+      guideRectToVideoCrop(
+        video,
+        contenedor.clientWidth,
+        contenedor.clientHeight,
+        guide,
+      ).sw,
+    );
+  })();
 
   const colorMarco = !ready
     ? 'rgba(255,255,255,0.5)'
@@ -474,6 +557,20 @@ export default function DocumentCamera({
               <div className="mt-1.5 border-t border-slate-700 pt-1.5 flex justify-between">
                 <span>motivo</span>
                 <span>{analysis.issue ?? 'ninguno'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>cámara</span>
+                <span>
+                  {videoRef.current?.videoWidth ?? 0}x{videoRef.current?.videoHeight ?? 0}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>recorte</span>
+                <span
+                  className={anchoRecorte < 1400 ? 'text-amber-400' : 'text-green-400'}
+                >
+                  {anchoRecorte} px
+                </span>
               </div>
             </div>
           )}

@@ -181,6 +181,26 @@ INFO:app.pipeline:MRZ leído (directa): numero=12345678Z valido=True nombre=True
 INFO:app.pipeline:Extracción terminada en 18.9 s: numero=True nombre=True domicilio=True
 ```
 
+### Resolución de la foto: el factor que más pesa
+
+Las etiquetas del DNI ("APELLIDOS", "NOMBRE"...) miden en torno a 1,2 mm.
+Sobre una tarjeta de 85,6 mm de ancho:
+
+| Ancho de la foto | px/mm | Alto de una etiqueta | |
+| ---------------- | ----- | -------------------- | --- |
+| 950 px  | 11,1 | 13 px | ilegible |
+| 1500 px | 17,5 | 21 px | justo |
+| 1700 px | 19,9 | 24 px | cómodo |
+
+Tesseract necesita 20-30 px de alto para leer con fiabilidad. Con un flujo de
+vídeo de 1080p el recorte del marco sale a unos 950 px y las etiquetas se
+pierden: se lee texto suelto pero ninguna etiqueta, y sin etiquetas no hay
+forma de localizar los campos. Por eso la página de captura pide la máxima
+resolución al dispositivo y usa `ImageCapture.takePhoto()` cuando está
+disponible, que usa el sensor completo en lugar de la vista previa.
+
+**Ampliar una imagen pequeña no sirve de nada**: hace falta detalle real.
+
 ### La detección de contorno solo se usa cuando hace falta
 
 El pipeline original se diseñó para fotos de un DNI sobre una mesa: detectaba
