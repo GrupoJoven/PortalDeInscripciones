@@ -20,11 +20,41 @@ const SIGNED_URL_TTL_SECONDS = 180;
 type SessionRow = {
   id: string;
   status: string;
+  minor_without_dni: boolean;
   front_path: string | null;
   back_path: string | null;
   expires_at: string;
   attempts: number;
 };
+
+/**
+ * Campos que hay que haber leído para dar la verificación por válida.
+ *
+ * Si el menor no tiene DNI y se verifica el de un progenitor, el nombre leído
+ * es el del adulto y no se usa, así que no se exige. El número y el domicilio
+ * sí: el domicilio es justamente lo que permite comprobar la zona pastoral.
+ */
+function camposObligatorios(minorWithoutDni: boolean) {
+  return minorWithoutDni
+    ? (["numero", "domicilio_texto"] as const)
+    : (["numero", "nombre", "domicilio_texto"] as const);
+}
+
+const ETIQUETAS_CAMPOS: Record<string, string> = {
+  numero: "el número de DNI",
+  nombre: "el nombre",
+  domicilio_texto: "el domicilio",
+};
+
+function camposQueFaltan(
+  extracted: Record<string, unknown>,
+  minorWithoutDni: boolean,
+): string[] {
+  return camposObligatorios(minorWithoutDni).filter((campo) => {
+    const valor = extracted[campo];
+    return typeof valor !== "string" || valor.trim() === "";
+  });
+}
 
 /**
  * Recibe una cara del documento desde el móvil, la guarda en el bucket
@@ -74,7 +104,7 @@ Deno.serve(async (req) => {
 
     const { data: session, error: sessionError } = await supabase
       .from("dni_verification_sessions")
-      .select("id, status, front_path, back_path, expires_at, attempts")
+      .select("id, status, minor_without_dni, front_path, back_path, expires_at, attempts")
       .eq("mobile_token_hash", await sha256(mobileToken))
       .maybeSingle<SessionRow>();
 
@@ -125,6 +155,7 @@ Deno.serve(async (req) => {
         ocrSecret,
         frontPath: session.front_path,
         backPath: session.back_path,
+        minorWithoutDni: session.minor_without_dni,
       });
     }
 
@@ -201,6 +232,7 @@ Deno.serve(async (req) => {
       ocrSecret,
       frontPath: frontPath!,
       backPath: backPath!,
+      minorWithoutDni: session.minor_without_dni,
     });
   } catch (error) {
     console.error("Error no controlado en dni-verification-upload:", error);
@@ -229,6 +261,7 @@ async function extraerYGuardar({
   ocrSecret,
   frontPath,
   backPath,
+  minorWithoutDni,
 }: {
   supabase: ReturnType<typeof createClient>;
   sessionId: string;
@@ -236,6 +269,7 @@ async function extraerYGuardar({
   ocrSecret: string;
   frontPath: string;
   backPath: string;
+  minorWithoutDni: boolean;
 }) {
   const frontUrl = await crearEnlaceFirmado(supabase, frontPath);
   const backUrl = await crearEnlaceFirmado(supabase, backPath);
@@ -292,16 +326,23 @@ async function extraerYGuardar({
     );
   }
 
-  const hasAnyField = Boolean(extracted.numero || extracted.nombre || extracted.domicilio_texto);
+  // Antes bastaba con leer un campo cualquiera para dar la lectura por buena,
+  // así que con solo el número se podía continuar y la verificación quedaba
+  // en nada. Ahora tienen que estar todos los que la validación exige.
+  const faltan = camposQueFaltan(extracted, minorWithoutDni);
 
-  if (!hasAnyField) {
-    await marcarFallo(supabase, sessionId, "No se ha reconocido ningún dato en las fotos.");
+  if (faltan.length > 0) {
+    const listado = faltan.map((campo) => ETIQUETAS_CAMPOS[campo] ?? campo).join(" y ");
+
+    await marcarFallo(supabase, sessionId, `No se ha podido leer ${listado}.`);
 
     return jsonResponse({
       ok: true,
       status: "failed",
+      missing_fields: faltan,
       message:
-        "No hemos podido leer los datos del documento. Repite las fotos con mejor luz y sin reflejos.",
+        `No hemos podido leer ${listado} del documento. ` +
+        "Repite las fotos con mejor luz, sin reflejos y con el documento bien encajado en el marco.",
     });
   }
 

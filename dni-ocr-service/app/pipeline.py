@@ -124,34 +124,54 @@ def ocr(
     configuraciones: tuple[str, ...] | None = None,
     puntuacion_suficiente: float = PUNTUACION_SUFICIENTE,
 ) -> str:
-    """Ejecuta OCR probando configuraciones hasta dar con una lo bastante buena.
+    """Texto reconocido en la imagen. Envoltorio de `ocr_con_posiciones`."""
+    return ocr_con_posiciones(imagen, configuraciones, puntuacion_suficiente)[0]
 
-    Se para en cuanto una pasada reconoce suficientes etiquetas del documento.
-    Recorrer siempre las tres multiplicaba por tres el tiempo sin mejorar el
-    resultado, y en un servidor modesto eso bastaba para agotar el tiempo de
-    espera de la función que lo llama.
+
+def ocr_con_posiciones(
+    imagen: np.ndarray,
+    configuraciones: tuple[str, ...] | None = None,
+    puntuacion_suficiente: float = PUNTUACION_SUFICIENTE,
+) -> tuple[str, list["LineaOCR"]]:
+    """Ejecuta OCR y devuelve el texto y las líneas con sus coordenadas.
+
+    Se usa `image_to_data`, que da lo mismo que `image_to_string` más la
+    posición de cada palabra, así que sale gratis: una sola pasada sirve tanto
+    para las expresiones regulares como para localizar los campos por su sitio
+    en la tarjeta.
+
+    Se prueban varias segmentaciones y se corta en cuanto una reconoce
+    suficientes etiquetas del documento. Recorrerlas todas siempre triplicaba
+    el tiempo sin mejorar el resultado.
     """
     # Se lee en tiempo de llamada, no como valor por defecto, para poder
     # sustituirlo en pruebas y para respetar el idioma detectado al arrancar.
     configuraciones = configuraciones or CONFIGURACIONES_OCR
 
     mejor_texto = ""
+    mejores_lineas: list[LineaOCR] = []
     mejor_puntuacion = -1.0
     errores = 0
 
     for config in configuraciones:
         try:
-            texto = pytesseract.image_to_string(imagen, config=config)
+            datos = pytesseract.image_to_data(
+                imagen, config=config, output_type=pytesseract.Output.DICT
+            )
         except pytesseract.TesseractError as error:
             errores += 1
             logger.warning("Tesseract ha fallado con %s: %s", config, error)
             continue
+
+        lineas = _agrupar_en_lineas(datos)
+        texto = "\n".join(linea.texto for linea in lineas)
 
         puntuacion = _puntuar_texto_ocr(texto)
 
         if puntuacion > mejor_puntuacion:
             mejor_puntuacion = puntuacion
             mejor_texto = texto
+            mejores_lineas = lineas
 
         if puntuacion >= puntuacion_suficiente:
             break
@@ -162,7 +182,7 @@ def ocr(
             "Revisa la instalación del binario y del paquete de idioma."
         )
 
-    return mejor_texto
+    return mejor_texto, mejores_lineas
 
 
 def _puntuar_texto_ocr(texto: str) -> float:
@@ -187,6 +207,166 @@ def _puntuar_texto_ocr(texto: str) -> float:
 
     # Peso principal: etiquetas reconocidas. Desempate: longitud del texto.
     return encontradas * 100 + min(len(texto), 2000) / 2000
+
+
+# ---------------------------------------------------------------------------
+# MRZ (banda de caracteres del reverso)
+# ---------------------------------------------------------------------------
+# El reverso del DNI lleva abajo tres líneas de 30 caracteres en formato TD1,
+# impresas en OCR-B: una tipografía pensada precisamente para que la lean las
+# máquinas. Ahí están el número de documento, los apellidos y el nombre, y
+# además con dígitos de control para comprobar que se han leído bien.
+#
+# Leer el nombre de aquí es mucho más fiable que sacarlo del texto decorativo
+# del anverso, que es pequeño, va sobre un fondo con guilloches y en las
+# versiones nuevas del documento está en dos idiomas.
+
+# Solo hacen falta letras, cifras y el relleno '<': restringir el alfabeto
+# evita que Tesseract invente signos de puntuación.
+CONFIG_MRZ = (
+    "--oem 3 --psm 6 "
+    "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789< "
+    "-c load_system_dawg=0 -c load_freq_dawg=0"
+)
+
+VALORES_MRZ = {**{str(d): d for d in range(10)}, "<": 0}
+VALORES_MRZ.update({chr(ord("A") + i): 10 + i for i in range(26)})
+
+
+def _digito_control_mrz(cadena: str) -> int:
+    """Dígito de control estándar de un MRZ: pesos 7, 3, 1 en ciclo."""
+    pesos = (7, 3, 1)
+    total = 0
+
+    for indice, caracter in enumerate(cadena):
+        total += VALORES_MRZ.get(caracter, 0) * pesos[indice % 3]
+
+    return total % 10
+
+
+def _limpiar_linea_mrz(linea: str) -> str:
+    """Normaliza una línea de MRZ y corrige confusiones típicas del OCR."""
+    limpia = re.sub(r"[^A-Z0-9<]", "", linea.upper().replace(" ", ""))
+    return limpia
+
+
+def localizar_lineas_mrz(texto: str) -> list[str] | None:
+    """Busca en el texto tres líneas consecutivas con pinta de MRZ TD1."""
+    candidatas = [
+        _limpiar_linea_mrz(linea)
+        for linea in texto.splitlines()
+        if linea.strip()
+    ]
+
+    # Una línea de TD1 mide 30 caracteres; damos margen porque el OCR se come
+    # o añade alguno en los extremos.
+    candidatas = [c for c in candidatas if 24 <= len(c) <= 36 and "<" in c]
+
+    for indice in range(len(candidatas) - 2):
+        trio = candidatas[indice : indice + 3]
+
+        if trio[0].startswith("ID") or trio[0].startswith("I<") or "ESP" in trio[0][:8]:
+            return trio
+
+    # Si no reconocemos la primera línea, al menos devolvemos tres seguidas.
+    if len(candidatas) >= 3:
+        return candidatas[:3]
+
+    return None
+
+
+def parsear_mrz(lineas: list[str]) -> dict:
+    """Extrae número, apellidos y nombre de un MRZ TD1 de tres líneas."""
+    resultado: dict[str, Any] = {
+        "numero": None,
+        "nombre": None,
+        "apellidos": None,
+        "numero_valido": False,
+    }
+
+    if not lineas or len(lineas) < 3:
+        return resultado
+
+    primera, _, tercera = lineas[0], lineas[1], lineas[2]
+
+    # --- Número de DNI ---------------------------------------------------
+    # En el DNI español, el campo de número de documento del MRZ lleva el
+    # número de soporte, y el número de DNI va en los datos opcionales.
+    coincidencia = re.search(r"(\d{8}[A-Z])", primera)
+
+    if coincidencia:
+        candidato = coincidencia.group(1)
+        resultado["numero"] = candidato
+        resultado["numero_valido"] = letra_dni_correcta(candidato)
+
+    # --- Nombre y apellidos ----------------------------------------------
+    # Formato: APELLIDO1<APELLIDO2<<NOMBRE<COMPUESTO<<<<<<<
+    if "<<" in tercera:
+        parte_apellidos, _, parte_nombre = tercera.partition("<<")
+    else:
+        parte_apellidos, parte_nombre = tercera, ""
+
+    apellidos = normalizar_espacios(parte_apellidos.replace("<", " "))
+    nombre = normalizar_espacios(parte_nombre.replace("<", " "))
+
+    if apellidos:
+        resultado["apellidos"] = apellidos
+
+    if nombre:
+        resultado["nombre"] = nombre
+
+    # La línea 3 mide 30 caracteres fijos: si el nombre los llena hasta el
+    # final, es que no cabía y está cortado. Solo cuando queda relleno '<' al
+    # final podemos fiarnos de que está completo.
+    resultado["nombre_completo_garantizado"] = tercera.endswith("<")
+
+    return resultado
+
+
+def leer_mrz(imagen_reverso: np.ndarray) -> dict:
+    """Recorta la franja inferior del reverso y lee el MRZ.
+
+    El MRZ ocupa aproximadamente el tercio inferior de la tarjeta. Aislarlo y
+    leerlo con un alfabeto restringido da muchos menos errores que buscarlo
+    dentro del texto de toda la cara.
+    """
+    alto, ancho = imagen_reverso.shape[:2]
+
+    # Se prueban varios recortes por si la tarjeta viene con más o menos
+    # margen del esperado.
+    for desde in (0.62, 0.55, 0.70):
+        franja = imagen_reverso[int(alto * desde) :, :]
+
+        if franja.size == 0:
+            continue
+
+        for imagen in (franja, preprocesar_recorte_para_ocr(franja)):
+            try:
+                texto = pytesseract.image_to_string(imagen, config=CONFIG_MRZ)
+            except pytesseract.TesseractError as error:
+                logger.warning("Tesseract ha fallado leyendo el MRZ: %s", error)
+                continue
+
+            lineas = localizar_lineas_mrz(texto)
+
+            if not lineas:
+                continue
+
+            datos = parsear_mrz(lineas)
+
+            # Nos quedamos con la primera lectura que dé nombre o número.
+            if datos.get("nombre") or datos.get("numero"):
+                logger.info(
+                    "MRZ leído (recorte %.0f%%): numero=%s valido=%s nombre=%s",
+                    desde * 100,
+                    datos.get("numero"),
+                    datos.get("numero_valido"),
+                    bool(datos.get("nombre")),
+                )
+                return datos
+
+    logger.info("No se ha podido leer el MRZ del reverso")
+    return {"numero": None, "nombre": None, "apellidos": None, "numero_valido": False}
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +401,303 @@ def extraer_nombre_completo(texto: str) -> str | None:
         return None
 
     return f"{nombre} {apellidos}"
+
+
+@dataclass
+class LineaOCR:
+    texto: str
+    x0: int
+    y0: int
+    x1: int
+    y1: int
+
+
+# --- Etiquetas del documento ----------------------------------------------
+# En los DNI recientes las etiquetas van en español e inglés
+# ("APELLIDOS / SURNAME"), así que se contemplan ambas.
+
+ETIQUETA_APELLIDOS = re.compile(
+    r"\bAPELLIDOS?\b|\bSURNAMES?\b|PRIMER\s+APELLIDO", re.IGNORECASE
+)
+
+ETIQUETA_NOMBRE = re.compile(
+    r"\bNOMBRE\b|\bGIVEN\s+NAMES?\b|\bNAME\b", re.IGNORECASE
+)
+
+# Lo que viene después del nombre en el anverso: marca dónde termina.
+ETIQUETA_TRAS_NOMBRE = re.compile(
+    r"\bSEXO\b|\bSEX\b|\bNACIONALIDAD\b|\bNATIONALITY\b|\bFECHA\b|"
+    r"\bVALIDEZ\b|\bNACIM|\bIDESP\b|\bSOPORTE\b|\bDNI\b",
+    re.IGNORECASE,
+)
+
+# Etiquetas que marcan el final del bloque del domicilio.
+ETIQUETAS_SIGUIENTES = re.compile(
+    r"\b(LUGAR|NACIM|EQUIPO|HIJO|PADRES?|DE\s+NACIM|IDESP|PROVINCIA\s*/)",
+    re.IGNORECASE,
+)
+
+# Una línea que sea solo una etiqueta no es un valor.
+SOLO_ETIQUETA = re.compile(
+    r"^[\W_]*(APELLIDOS?|SURNAMES?|NOMBRE|NAME|GIVEN\s+NAMES?|SEXO|SEX|"
+    r"NACIONALIDAD|NATIONALITY|DOMICILIO|ADDRESS)[\W_]*$",
+    re.IGNORECASE,
+)
+
+
+def _agrupar_en_lineas(datos: dict) -> list[LineaOCR]:
+    """Agrupa las palabras de `image_to_data` en líneas con sus coordenadas."""
+    agrupadas: dict[tuple[int, int, int], list[int]] = {}
+
+    for indice, texto in enumerate(datos["text"]):
+        if not texto or not texto.strip():
+            continue
+
+        try:
+            confianza = float(datos["conf"][indice])
+        except (TypeError, ValueError):
+            confianza = -1.0
+
+        if confianza < 20:
+            continue
+
+        clave = (
+            datos["block_num"][indice],
+            datos["par_num"][indice],
+            datos["line_num"][indice],
+        )
+        agrupadas.setdefault(clave, []).append(indice)
+
+    lineas: list[LineaOCR] = []
+
+    for indices in agrupadas.values():
+        indices.sort(key=lambda i: datos["left"][i])
+
+        palabras = [datos["text"][i].strip() for i in indices]
+        x0 = min(datos["left"][i] for i in indices)
+        y0 = min(datos["top"][i] for i in indices)
+        x1 = max(datos["left"][i] + datos["width"][i] for i in indices)
+        y1 = max(datos["top"][i] + datos["height"][i] for i in indices)
+
+        lineas.append(LineaOCR(normalizar_espacios(" ".join(palabras)), x0, y0, x1, y1))
+
+    lineas.sort(key=lambda l: (l.y0, l.x0))
+    return lineas
+
+
+def _lineas_debajo(
+    lineas: list[LineaOCR],
+    etiqueta: LineaOCR,
+    maximo: int = 4,
+) -> list[LineaOCR]:
+    """Líneas situadas bajo una etiqueta y alineadas con ella."""
+    resultado: list[LineaOCR] = []
+
+    for linea in lineas:
+        if linea is etiqueta or linea.y0 < etiqueta.y1 - 2:
+            continue
+
+        # Tiene que solaparse horizontalmente con la etiqueta: así no se
+        # cuelan campos de la otra columna del documento.
+        solape = min(linea.x1, etiqueta.x1 + 260) - max(linea.x0, etiqueta.x0 - 40)
+
+        if solape <= 0:
+            continue
+
+        if ETIQUETAS_SIGUIENTES.search(linea.texto):
+            break
+
+        resultado.append(linea)
+
+        if len(resultado) >= maximo:
+            break
+
+    return resultado
+
+
+def _resto_tras_etiqueta(linea: LineaOCR, patron: re.Pattern) -> str:
+    """Texto que queda en la línea después de la etiqueta.
+
+    A veces Tesseract junta la etiqueta y su valor en una sola línea
+    ("APELLIDOS GARCIA"); así no se pierde el valor.
+    """
+    coincidencia = patron.search(linea.texto)
+
+    if not coincidencia:
+        return ""
+
+    resto = linea.texto[coincidencia.end() :]
+    resto = re.sub(r"^[\s/\\|:.,-]+", "", resto)
+
+    # Quitar la traducción al inglés de la etiqueta, si la lleva pegada.
+    resto = ETIQUETA_APELLIDOS.sub("", resto)
+    resto = re.sub(r"^\s*(SURNAMES?|NAMES?)\b", "", resto, flags=re.IGNORECASE)
+
+    return normalizar_espacios(resto)
+
+
+def _valores_en_franja(
+    lineas: list[LineaOCR],
+    etiqueta: LineaOCR,
+    limite_y: int | None,
+    maximo: int = 3,
+) -> list[str]:
+    """Valores situados bajo una etiqueta y por encima de `limite_y`.
+
+    Se exige que empiecen más o menos donde empieza la etiqueta: en el anverso
+    los valores van alineados a la izquierda con su etiqueta, y eso evita que
+    se cuelen campos de la otra columna o texto de encima de la fotografía.
+    """
+    tolerancia = max(60, int((etiqueta.x1 - etiqueta.x0) * 0.8))
+
+    valores: list[str] = []
+
+    # La propia línea de la etiqueta puede traer el valor pegado.
+    pegado = _resto_tras_etiqueta(etiqueta, ETIQUETA_APELLIDOS) or _resto_tras_etiqueta(
+        etiqueta, ETIQUETA_NOMBRE
+    )
+
+    if pegado and not SOLO_ETIQUETA.match(pegado):
+        valores.append(pegado)
+
+    for linea in lineas:
+        if linea is etiqueta:
+            continue
+
+        if linea.y0 < etiqueta.y1 - 4:
+            continue
+
+        if limite_y is not None and linea.y0 >= limite_y - 4:
+            continue
+
+        if abs(linea.x0 - etiqueta.x0) > tolerancia:
+            continue
+
+        texto = linea.texto.strip()
+
+        if not texto or SOLO_ETIQUETA.match(texto):
+            continue
+
+        # Un valor de nombre no lleva cifras ni signos raros.
+        if not re.search(r"[A-ZÁÉÍÓÚÜÑ]", texto, re.IGNORECASE):
+            continue
+
+        valores.append(normalizar_espacios(texto))
+
+        if len(valores) >= maximo:
+            break
+
+    return valores
+
+
+# Tesseract confunde a menudo el guion con sus primos tipográficos (raya,
+# semirraya, signo menos...) y el apóstrofo con las comillas tipográficas.
+# Sin normalizarlos, un apellido compuesto como FERNANDEZ-MONTESINOS perdía
+# el guion al limpiarlo.
+GUIONES = "‐‑‒–—―−﹘﹣－"
+APOSTROFOS = "‘’ʼ´`"
+
+TRADUCCION_SIGNOS = str.maketrans(
+    {**{c: "-" for c in GUIONES}, **{c: "'" for c in APOSTROFOS}}
+)
+
+
+def _limpiar_nombre(valor: str) -> str:
+    """Deja solo letras, espacios, guiones y apóstrofos."""
+    normalizado = valor.upper().translate(TRADUCCION_SIGNOS)
+    limpio = re.sub(r"[^A-ZÁÉÍÓÚÜÑÇ'\-\s]", " ", normalizado)
+
+    # Un guion suelto entre espacios no es parte del apellido.
+    limpio = re.sub(r"\s+-\s+", " ", limpio)
+
+    return normalizar_espacios(limpio)
+
+
+def extraer_nombre_por_posicion(lineas: list[LineaOCR]) -> str | None:
+    """Lee nombre y apellidos del anverso usando la posición de las etiquetas.
+
+    Se busca la etiqueta APELLIDOS y se toman las líneas que hay debajo hasta
+    la etiqueta NOMBRE; luego, las que hay bajo NOMBRE hasta SEXO o
+    NACIONALIDAD. Los apellidos ocupan a menudo dos líneas, y así se recogen
+    ambas.
+
+    Frente a leerlo del MRZ del reverso, esto no trunca: la línea 3 del MRZ
+    mide 30 caracteres fijos y un nombre largo se corta sin remedio.
+    """
+    if not lineas:
+        return None
+
+    etiqueta_apellidos = None
+    etiqueta_nombre = None
+
+    for linea in lineas:
+        if etiqueta_apellidos is None and ETIQUETA_APELLIDOS.search(linea.texto):
+            etiqueta_apellidos = linea
+            continue
+
+        # La etiqueta NOMBRE tiene que estar por debajo de APELLIDOS.
+        if (
+            etiqueta_nombre is None
+            and ETIQUETA_NOMBRE.search(linea.texto)
+            and not ETIQUETA_APELLIDOS.search(linea.texto)
+            and (etiqueta_apellidos is None or linea.y0 >= etiqueta_apellidos.y0)
+        ):
+            etiqueta_nombre = linea
+
+    if etiqueta_apellidos is None or etiqueta_nombre is None:
+        return None
+
+    # Dónde termina el bloque del nombre.
+    limite_nombre = None
+
+    for linea in lineas:
+        if linea.y0 > etiqueta_nombre.y1 and ETIQUETA_TRAS_NOMBRE.search(linea.texto):
+            limite_nombre = linea.y0
+            break
+
+    apellidos = _valores_en_franja(lineas, etiqueta_apellidos, etiqueta_nombre.y0, maximo=3)
+    nombres = _valores_en_franja(lineas, etiqueta_nombre, limite_nombre, maximo=2)
+
+    apellidos_texto = _limpiar_nombre(" ".join(apellidos))
+    nombre_texto = _limpiar_nombre(" ".join(nombres))
+
+    if not apellidos_texto or not nombre_texto:
+        return None
+
+    return f"{nombre_texto} {apellidos_texto}"
+
+
+def extraer_domicilio_por_posicion(lineas: list[LineaOCR]) -> dict | None:
+    """Busca la etiqueta DOMICILIO y toma las líneas que hay debajo."""
+    etiqueta = next(
+        (l for l in lineas if re.search(r"\bDOMICILIO\b", l.texto, re.IGNORECASE)),
+        None,
+    )
+
+    if etiqueta is None:
+        return None
+
+    debajo = _lineas_debajo(lineas, etiqueta, maximo=4)
+    textos = [l.texto for l in debajo if l.texto.strip()]
+
+    if not textos:
+        return None
+
+    direccion = textos[0]
+    localidad = textos[1] if len(textos) > 1 else None
+    provincia = None
+
+    for texto in textos[2:]:
+        if "/" in texto:
+            partes = [p.strip() for p in texto.split("/") if p.strip()]
+            if partes:
+                provincia = partes[-1]
+                break
+
+    if provincia is None and len(textos) > 2:
+        provincia = textos[2]
+
+    return {"direccion": direccion, "localidad": localidad, "provincia": provincia}
 
 
 def extraer_bloque_domicilio(texto: str) -> dict | None:
@@ -571,13 +1048,15 @@ def procesar_cara(imagen: np.ndarray) -> ResultadoCara:
     """Procesa una cara del documento y decide si es anverso o reverso."""
     recorte = _preparar_para_ocr(imagen)
 
-    texto = ocr(recorte)
+    texto, lineas = ocr_con_posiciones(recorte)
 
     # Si el OCR en color va flojo, reintentar con la versión binarizada.
     if _puntuar_texto_ocr(texto) < 100:
-        texto_binario = ocr(preprocesar_recorte_para_ocr(recorte))
+        texto_binario, lineas_binario = ocr_con_posiciones(
+            preprocesar_recorte_para_ocr(recorte)
+        )
         if _puntuar_texto_ocr(texto_binario) > _puntuar_texto_ocr(texto):
-            texto = texto_binario
+            texto, lineas = texto_binario, lineas_binario
 
     es_anverso = bool(
         re.search(r"\bNACIONALIDAD\b", texto, flags=re.IGNORECASE)
@@ -585,17 +1064,50 @@ def procesar_cara(imagen: np.ndarray) -> ResultadoCara:
     )
 
     if es_anverso:
+        # Primero por posición (etiquetas APELLIDOS y NOMBRE con sus líneas
+        # debajo); si no, la expresión regular original.
+        nombre = extraer_nombre_por_posicion(lineas)
+
+        if not nombre:
+            nombre = extraer_nombre_completo(texto)
+
         return ResultadoCara(
             es_anverso=True,
             numero=extraer_dni_anverso(texto),
-            nombre=extraer_nombre_completo(texto),
+            nombre=nombre,
             texto=texto,
         )
 
+    # Reverso: el domicilio se busca primero por posición (etiqueta DOMICILIO
+    # y líneas de debajo) y solo si eso falla se recurre a la expresión
+    # regular, que depende del orden en que Tesseract devuelva las líneas.
+    domicilio = extraer_domicilio_por_posicion(lineas)
+
+    if not domicilio:
+        domicilio = extraer_bloque_domicilio(texto)
+
+    # El MRZ da el número con dígito de control, que es lo más fiable.
+    mrz = leer_mrz(recorte)
+
+    numero = mrz.get("numero") or extraer_dni_reverso(texto)
+
+    # El nombre del MRZ solo se usa como último recurso, y únicamente si se
+    # puede garantizar que no está truncado: la línea 3 mide 30 caracteres
+    # fijos y un nombre largo se corta.
+    nombre = None
+
+    if (
+        mrz.get("nombre")
+        and mrz.get("apellidos")
+        and mrz.get("nombre_completo_garantizado")
+    ):
+        nombre = f"{mrz['nombre']} {mrz['apellidos']}"
+
     return ResultadoCara(
         es_anverso=False,
-        numero=extraer_dni_reverso(texto),
-        domicilio=extraer_bloque_domicilio(texto),
+        numero=numero,
+        nombre=nombre,
+        domicilio=domicilio,
         texto=texto,
     )
 
@@ -635,7 +1147,13 @@ def extraer_datos(anverso: np.ndarray, reverso: np.ndarray) -> dict[str, Any]:
     if not traseras:
         avisos.append("No se ha reconocido el reverso del documento.")
 
+    # El nombre se lee del anverso, que es donde aparece completo. El del MRZ
+    # (reverso) solo llega aquí si se pudo garantizar que no venía truncado.
     nombre = next((c.nombre for c in delanteras if c.nombre), None)
+
+    if not nombre:
+        nombre = next((c.nombre for c in traseras if c.nombre), None)
+
     domicilio = next((c.domicilio for c in traseras if c.domicilio), None)
 
     # El número aparece en ambas caras; preferimos el que valide el control.
@@ -653,12 +1171,21 @@ def extraer_datos(anverso: np.ndarray, reverso: np.ndarray) -> dict[str, Any]:
     if numero is None:
         avisos.append("No se ha podido leer el número de DNI.")
 
+    domicilio_texto = formatear_domicilio(domicilio)
+
     return {
         "numero": numero,
         "nombre": nombre,
         "domicilio": domicilio,
-        "domicilio_texto": formatear_domicilio(domicilio),
+        "domicilio_texto": domicilio_texto,
         "numero_valido": letra_dni_correcta(numero) if numero else False,
+        # Qué se ha podido leer. Quien llama decide si con eso basta: para un
+        # menor sin DNI propio el nombre del progenitor no hace falta.
+        "campos_leidos": {
+            "numero": bool(numero),
+            "nombre": bool(nombre),
+            "domicilio": bool(domicilio_texto),
+        },
         "avisos": avisos,
     }
 

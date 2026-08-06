@@ -56,6 +56,7 @@ class RespuestaExtraccion(BaseModel):
     domicilio: dict | None = None
     domicilio_texto: str | None = None
     numero_valido: bool = False
+    campos_leidos: dict = {}
     avisos: list[str] = []
 
 

@@ -15,11 +15,40 @@ const POST_CONFIRM_TTL_HOURS = 24;
 type SessionRow = {
   id: string;
   status: string;
+  minor_without_dni: boolean;
   front_path: string | null;
   back_path: string | null;
   expires_at: string;
   extracted: Record<string, unknown> | null;
 };
+
+/**
+ * Última barrera: aunque la interfaz del móvil ya impide confirmar con datos
+ * incompletos, aquí se vuelve a comprobar. Si no, bastaría con una petición
+ * hecha a mano para dar por verificado un documento del que no se ha leído
+ * nada, y la verificación no serviría de nada.
+ */
+const ETIQUETAS_CAMPOS: Record<string, string> = {
+  numero: "el número de DNI",
+  nombre: "el nombre",
+  domicilio_texto: "el domicilio",
+};
+
+function camposQueFaltan(
+  extracted: Record<string, unknown> | null,
+  minorWithoutDni: boolean,
+): string[] {
+  if (!extracted) return Object.keys(ETIQUETAS_CAMPOS);
+
+  const obligatorios = minorWithoutDni
+    ? ["numero", "domicilio_texto"]
+    : ["numero", "nombre", "domicilio_texto"];
+
+  return obligatorios.filter((campo) => {
+    const valor = extracted[campo];
+    return typeof valor !== "string" || valor.trim() === "";
+  });
+}
 
 /**
  * El usuario acepta los datos leídos. En ese momento se borran las fotos del
@@ -53,7 +82,7 @@ Deno.serve(async (req) => {
 
     const { data: session, error: sessionError } = await supabase
       .from("dni_verification_sessions")
-      .select("id, status, front_path, back_path, expires_at, extracted")
+      .select("id, status, minor_without_dni, front_path, back_path, expires_at, extracted")
       .eq("mobile_token_hash", await sha256(mobileToken))
       .maybeSingle<SessionRow>();
 
@@ -89,6 +118,28 @@ Deno.serve(async (req) => {
           message: "Todavía no hay datos verificados que confirmar.",
         },
         409,
+      );
+    }
+
+    const faltan = camposQueFaltan(session.extracted, session.minor_without_dni);
+
+    if (faltan.length > 0) {
+      const listado = faltan.map((campo) => ETIQUETAS_CAMPOS[campo] ?? campo).join(" y ");
+
+      console.warn(
+        `Intento de confirmar la sesión ${session.id} sin ${listado}`,
+      );
+
+      return jsonResponse(
+        {
+          ok: false,
+          error: "incomplete_data",
+          missing_fields: faltan,
+          message:
+            `No se puede continuar sin ${listado}. ` +
+            "Repite las fotos del documento.",
+        },
+        422,
       );
     }
 

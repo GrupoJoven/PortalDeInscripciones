@@ -299,6 +299,24 @@ export default function DniCapturePage() {
     return extracted.avisos.filter(Boolean);
   }, [extracted]);
 
+  /**
+   * Campos obligatorios que no se han podido leer. Sin ellos no se puede
+   * confirmar: si se dejara pasar, la verificación no comprobaría nada.
+   */
+  const camposQueFaltan = useMemo(() => {
+    if (!extracted) return [];
+
+    const faltan: string[] = [];
+
+    if (!extracted.numero?.trim()) faltan.push('el número de DNI');
+    if (!minorWithoutDni && !extracted.nombre?.trim()) faltan.push('el nombre');
+    if (!extracted.domicilio_texto?.trim()) faltan.push('el domicilio');
+
+    return faltan;
+  }, [extracted, minorWithoutDni]);
+
+  const puedeConfirmar = camposQueFaltan.length === 0;
+
   return (
     <div className="min-h-[100dvh] bg-slate-50">
       <div className="max-w-md mx-auto px-4 py-6 pb-16">
@@ -531,11 +549,31 @@ export default function DniCapturePage() {
               )}
             </div>
 
+            {!puedeConfirmar && (
+              <div className="flex items-start gap-2 text-red-700 bg-red-50 border border-red-200 p-4 rounded-2xl">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-bold mb-1">
+                    No se ha podido leer {camposQueFaltan.join(' ni ')}
+                  </p>
+                  <p>
+                    Para continuar hace falta leer todos los datos. Repite la foto
+                    correspondiente con mejor luz, sin reflejos y con el documento bien
+                    encajado en el marco.
+                  </p>
+                </div>
+              </div>
+            )}
+
             <button
               type="button"
               onClick={confirmar}
-              disabled={uploading}
-              className="w-full bg-green-600 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 disabled:opacity-60"
+              disabled={uploading || !puedeConfirmar}
+              className={`w-full py-4 rounded-2xl font-bold flex items-center justify-center gap-2 ${
+                puedeConfirmar
+                  ? 'bg-green-600 text-white disabled:opacity-60'
+                  : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+              }`}
             >
               {uploading ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
