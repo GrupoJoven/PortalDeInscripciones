@@ -12,7 +12,7 @@ const MAX_ATTEMPTS = 20;
 
 // El servicio de OCR puede tardar bastante si está en un plan que duerme el
 // contenedor: hay que sumar el arranque en frío a la lectura en sí.
-const OCR_TIMEOUT_MS = 110_000;
+const OCR_TIMEOUT_MS = 130_000;
 
 /** Validez de los enlaces firmados que se pasan al servicio de OCR. */
 const SIGNED_URL_TTL_SECONDS = 180;

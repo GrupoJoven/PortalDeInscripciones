@@ -133,6 +133,30 @@ entremezclan.
 No cuesta tiempo extra: `image_to_data` se pide en la misma pasada que ya se
 hacía para obtener el texto.
 
+### Lectura por zonas aisladas
+
+Leer la tarjeta entera de una vez tiene un problema: **el bloque del MRZ es tan
+denso y contrastado que acapara el análisis de estructura de Tesseract**, y el
+domicilio se pierde entero. El síntoma era este:
+
+```
+Cara leída: 1901x1199, 4 líneas, 112 caracteres, etiquetas=['IDESP']
+```
+
+112 caracteres que son básicamente el MRZ (90) y nada del domicilio. En el
+anverso pasa algo parecido con la fotografía del titular.
+
+Cuando la lectura de la tarjeta completa no da con un campo, se reintenta
+aislando su zona:
+
+- **Domicilio** → franja superior del reverso (0-62 % de la altura), dejando
+  el MRZ fuera.
+- **Nombre** → columna derecha del anverso (22-100 % del ancho), dejando la
+  fotografía fuera.
+
+Cada zona se prueba en color y binarizada. Solo se paga esa pasada extra
+cuando el campo no ha salido de la lectura normal.
+
 ### Por qué el nombre NO sale del MRZ
 
 El **MRZ** son las tres líneas de 30 caracteres del borde inferior del reverso
@@ -231,6 +255,7 @@ python3 test_pipeline.py   # extracción de campos y consolidación
 python3 test_mrz.py        # lectura y dígitos de control del MRZ
 python3 test_nombre.py     # nombre por posición, incluido un nombre muy largo
 python3 test_encuadres.py  # imagen recortada, con fondo, de lejos, inclinada
+python3 test_zonas.py      # domicilio con el MRZ compitiendo por la atención
 ```
 
 ## Cambios respecto al código original

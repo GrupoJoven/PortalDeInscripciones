@@ -50,7 +50,7 @@ PUNTUACION_SUFICIENTE = 200
 # Tiempo máximo para procesar un documento completo. Al agotarse se devuelve
 # lo que se haya podido leer en vez de seguir y agotar el tiempo de espera de
 # quien llama, que es peor: así al menos se sabe qué campo ha fallado.
-PRESUPUESTO_SEGUNDOS = float(os.environ.get("DNI_OCR_PRESUPUESTO_SEGUNDOS", 70))
+PRESUPUESTO_SEGUNDOS = float(os.environ.get("DNI_OCR_PRESUPUESTO_SEGUNDOS", 100))
 
 # Ancho al que se normaliza el recorte antes del OCR.
 #
@@ -791,6 +791,108 @@ def extraer_nombre_por_posicion(lineas: list[LineaOCR]) -> str | None:
     return f"{nombre_texto} {apellidos_texto}"
 
 
+def _recortar_zona(
+    imagen: np.ndarray,
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+) -> np.ndarray:
+    """Recorta una zona de la tarjeta en coordenadas relativas (0-1)."""
+    alto, ancho = imagen.shape[:2]
+
+    return imagen[
+        int(alto * y0) : int(alto * y1),
+        int(ancho * x0) : int(ancho * x1),
+    ]
+
+
+def _leer_zona(imagen: np.ndarray, deadline: float | None = None) -> list[LineaOCR]:
+    """OCR de una zona concreta, probando en color y binarizado.
+
+    Aislar la zona mejora mucho el análisis de estructura de Tesseract: en el
+    reverso, el bloque del MRZ es tan denso y contrastado que acapara la
+    segmentación y el domicilio se pierde; en el anverso, la fotografía del
+    titular estorba de forma parecida.
+    """
+    intentos = (
+        (imagen, "--oem 3 --psm 4 -l " + IDIOMA_OCR),
+        (None, "--oem 3 --psm 6 -l " + IDIOMA_OCR),
+    )
+
+    mejores: list[LineaOCR] = []
+
+    for fuente, config in intentos:
+        if _sin_tiempo(deadline):
+            logger.warning("Sin tiempo para leer la zona")
+            break
+
+        if fuente is None:
+            fuente = preprocesar_recorte_para_ocr(imagen)
+
+        try:
+            datos = pytesseract.image_to_data(
+                fuente, config=config, output_type=pytesseract.Output.DICT
+            )
+        except pytesseract.TesseractError as error:
+            logger.warning("Tesseract ha fallado leyendo la zona: %s", error)
+            continue
+
+        lineas = _agrupar_en_lineas(datos)
+
+        if len(lineas) > len(mejores):
+            mejores = lineas
+
+        # Con la etiqueta localizada ya no hace falta seguir probando.
+        texto = " ".join(l.texto for l in lineas).upper()
+        if "DOMICILIO" in texto or "APELLIDOS" in texto:
+            break
+
+    return mejores
+
+
+def extraer_domicilio_de_zona(
+    reverso: np.ndarray,
+    deadline: float | None = None,
+) -> dict | None:
+    """Lee el domicilio aislando la mitad superior del reverso.
+
+    El MRZ ocupa la franja inferior; dejándolo fuera, Tesseract analiza la
+    estructura del bloque del domicilio sin interferencias.
+    """
+    zona = _recortar_zona(reverso, 0.0, 0.0, 1.0, 0.62)
+
+    if zona.size == 0:
+        return None
+
+    lineas = _leer_zona(_escalar_para_ocr(zona), deadline=deadline)
+
+    logger.info("Zona del domicilio: %d líneas", len(lineas))
+
+    return extraer_domicilio_por_posicion(lineas)
+
+
+def extraer_nombre_de_zona(
+    anverso: np.ndarray,
+    deadline: float | None = None,
+) -> tuple[str | None, list[str]]:
+    """Lee el nombre aislando la columna de campos del anverso.
+
+    Se deja fuera la fotografía del titular, que ocupa el tercio izquierdo y
+    confunde el análisis de estructura.
+    """
+    zona = _recortar_zona(anverso, 0.22, 0.02, 1.0, 0.80)
+
+    if zona.size == 0:
+        return None, []
+
+    lineas = _leer_zona(_escalar_para_ocr(zona), deadline=deadline)
+
+    logger.info("Zona del nombre: %d líneas", len(lineas))
+
+    return extraer_bloque_nombre(lineas)
+
+
 def extraer_domicilio_por_posicion(lineas: list[LineaOCR]) -> dict | None:
     """Busca la etiqueta DOMICILIO y toma las líneas que hay debajo."""
     etiqueta = next(
@@ -1382,6 +1484,11 @@ def extraer_de_cara(
         # debajo); si no, la expresión regular original.
         nombre, candidatas = extraer_bloque_nombre(lineas)
 
+        # Si con la tarjeta entera no ha salido, se reintenta aislando la
+        # columna de campos, sin la fotografía del titular.
+        if not nombre and not candidatas:
+            nombre, candidatas = extraer_nombre_de_zona(recorte, deadline=deadline)
+
         if not nombre:
             nombre = extraer_nombre_completo(texto)
 
@@ -1400,6 +1507,11 @@ def extraer_de_cara(
 
     if not domicilio:
         domicilio = extraer_bloque_domicilio(texto)
+
+    # El MRZ acapara la segmentación del reverso y deja el domicilio sin leer,
+    # así que se reintenta con la franja superior aislada.
+    if not domicilio:
+        domicilio = extraer_domicilio_de_zona(recorte, deadline=deadline)
 
     # El MRZ da el número con dígito de control, que es lo más fiable.
     mrz = leer_mrz(recorte, deadline=deadline)
