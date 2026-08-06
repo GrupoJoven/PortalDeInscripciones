@@ -38,22 +38,29 @@ LETRAS_CONTROL = "TRWAGMYFPDXBNJZSQVHLCKE"
 # normal y hasta 10 s en una instancia compartida de 0,1 CPU, así que el
 # número de pasadas es LO que determina si la petición termina a tiempo.
 #
-# --psm 3 es el análisis de página completamente automático y el valor POR
-# DEFECTO de Tesseract. Es el que usaba el pipeline original, aunque no lo
-# pareciera: su cadena de configuración (`r'l spa - psm 11'`) no tiene el
-# formato que espera Tesseract, que la ignoraba entera y caía en los valores
-# por defecto. Y funcionaba.
+# Modos de segmentación de página, en el orden en que se prueban.
 #
-# Medido sobre una tarjeta a dos columnas:
+# Configurable con DNI_OCR_PSM (por ejemplo "3" o "3,4"). Se puede cambiar
+# desde el panel del proveedor sin reconstruir la imagen, para comparar modos
+# sobre documentos reales.
+#
+# Sobre una tarjeta sintética a dos columnas medí esto:
 #
 #     psm  3  ->  4 etiquetas reconocidas
 #     psm  4  ->  4 etiquetas
 #     psm  6  ->  4 etiquetas, pero pierde el domicilio
-#     psm 11  ->  3 etiquetas, pierde NOMBRE      <- el peor
+#     psm 11  ->  3 etiquetas, pierde NOMBRE
 #
-# psm 11 (texto disperso) no hace análisis de estructura, que es justo lo que
-# necesita un documento con fotografía a un lado y campos al otro.
-PSM_A_PROBAR = (3, 4)
+# ...pero una imagen sintética no es un DNI real: no tiene ni el ruido de la
+# cámara, ni el holograma, ni el relieve, ni la trama de seguridad. Sobre
+# documentos de verdad, psm 11 (texto disperso, sin análisis de estructura)
+# dio mejor resultado, así que es el valor por defecto. psm 3 queda de
+# respaldo por si psm 11 no reconoce nada.
+PSM_A_PROBAR = tuple(
+    int(valor)
+    for valor in os.environ.get("DNI_OCR_PSM", "11,3").split(",")
+    if valor.strip().isdigit()
+) or (11, 3)
 
 # Puntuación a partir de la cual no merece la pena probar más configuraciones:
 # equivale a haber reconocido 2 etiquetas del documento.
@@ -132,19 +139,23 @@ def config_ocr(psm: int, idioma: str | None = None) -> str:
 def _configuraciones() -> tuple[str, ...]:
     """Orden en que se prueban las configuraciones de Tesseract.
 
-    Primero español, que es lo correcto para un documento español. Pero si de
-    ahí no sale nada se reintenta en inglés, porque es con lo que el pipeline
-    original funcionaba sobre DNI reales: al ignorarse su cadena de
-    configuración, corría con el idioma por defecto. El modelo de idioma
-    influye en cómo se resuelven los caracteres dudosos, y en la tipografía
-    condensada de las etiquetas eso se nota.
+    Primero el modo principal en español, que es lo correcto para un documento
+    español. Si de ahí no sale nada se reintenta en inglés, porque es con lo
+    que el pipeline original funcionaba sobre DNI reales: al ignorarse su
+    cadena de configuración, corría con el idioma por defecto. El modelo de
+    idioma influye en cómo se resuelven los caracteres dudosos, y en la
+    tipografía condensada de las etiquetas eso se nota.
+
+    Se corta en cuanto una reconoce suficientes etiquetas, así que lo normal
+    es ejecutar solo la primera.
     """
     configuraciones = [config_ocr(PSM_A_PROBAR[0])]
 
     if IDIOMA_OCR != "eng":
         configuraciones.append(config_ocr(PSM_A_PROBAR[0], "eng"))
 
-    configuraciones.append(config_ocr(PSM_A_PROBAR[1]))
+    for psm in PSM_A_PROBAR[1:]:
+        configuraciones.append(config_ocr(psm))
 
     return tuple(configuraciones)
 
@@ -570,8 +581,15 @@ ETIQUETA_TRAS_NOMBRE = re.compile(
 )
 
 # Etiquetas que marcan el final del bloque del domicilio.
+#
+# Se contemplan las deformaciones típicas del OCR: la I de HIJO leída como 1
+# o como l, NACIMIENTO con 1, etc. Si una de estas no se reconoce, el bloque
+# de filiación (HIJO/A DE ...) se cuela dentro del domicilio.
 ETIQUETAS_SIGUIENTES = re.compile(
-    r"\b(LUGAR|NACIM|EQUIPO|HIJO|PADRES?|DE\s+NACIM|IDESP|PROVINCIA\s*/)",
+    r"\b("
+    r"LUGAR|NAC[I1L]M|EQU[I1L]PO|H[I1L]J[O0]|PADRES?|MADRE|"
+    r"[I1L]DESP|PROV[I1L]NC[I1L]A\s*/|VAL[I1L]DEZ|DN[I1L]\b|SOPORTE"
+    r")",
     re.IGNORECASE,
 )
 
@@ -626,10 +644,18 @@ def _agrupar_en_lineas(datos: dict) -> list[LineaOCR]:
 def _lineas_debajo(
     lineas: list[LineaOCR],
     etiqueta: LineaOCR,
-    maximo: int = 4,
+    maximo: int = 3,
 ) -> list[LineaOCR]:
-    """Líneas situadas bajo una etiqueta y alineadas con ella."""
+    """Líneas situadas bajo una etiqueta, alineadas con ella y de su bloque.
+
+    Además de parar en la siguiente etiqueta conocida, se corta cuando aparece
+    un hueco vertical grande. Dentro de un bloque las líneas van muy juntas;
+    el salto al bloque siguiente es notablemente mayor. Sin esto, si el OCR
+    deforma la etiqueta que debía detenernos (HIJO/A DE, LUGAR DE
+    NACIMIENTO...), ese bloque acaba dentro del domicilio.
+    """
     resultado: list[LineaOCR] = []
+    anterior: LineaOCR | None = None
 
     for linea in lineas:
         if linea is etiqueta or linea.y0 < etiqueta.y1 - 2:
@@ -645,7 +671,15 @@ def _lineas_debajo(
         if ETIQUETAS_SIGUIENTES.search(linea.texto):
             break
 
+        referencia = anterior or etiqueta
+        hueco = linea.y0 - referencia.y1
+        altura = max(12, referencia.y1 - referencia.y0)
+
+        if hueco > altura * 1.6:
+            break
+
         resultado.append(linea)
+        anterior = linea
 
         if len(resultado) >= maximo:
             break
@@ -1040,7 +1074,7 @@ def extraer_bloque_domicilio(texto: str) -> dict | None:
         # Respaldo: coger las líneas siguientes a DOMICILIO hasta una línea
         # que parezca otra etiqueta del documento.
         respaldo = re.search(
-            r"\bDOMICILIO\b[^\r\n]*[\r\n]+(?P<contenido>(?:[^\r\n]+[\r\n]+){1,4})",
+            r"\bDOMICILIO[^\r\n]*[\r\n]+(?P<contenido>(?:[^\r\n]+[\r\n]+){1,4})",
             texto,
             re.IGNORECASE,
         )
@@ -1050,11 +1084,21 @@ def extraer_bloque_domicilio(texto: str) -> dict | None:
     else:
         contenido = coincidencia.group("contenido")
 
-    lineas = [
-        normalizar_espacios(linea)
-        for linea in contenido.splitlines()
-        if linea.strip()
-    ]
+    lineas = []
+
+    for linea in contenido.splitlines():
+        if not linea.strip():
+            continue
+
+        # Cortar en cuanto empieza el bloque siguiente (LUGAR DE NACIMIENTO,
+        # HIJO/A DE...). Sin esto, la filiación acababa dentro del domicilio.
+        if ETIQUETAS_SIGUIENTES.search(linea):
+            break
+
+        lineas.append(normalizar_espacios(linea))
+
+        if len(lineas) >= 3:
+            break
 
     if not lineas:
         return None

@@ -49,6 +49,19 @@ DOMICILIOS = {
         "DOMICILIO\nCL EJEMPLO 12 3 B\nMADRID\nMADRID / MADRID\n"
         "LUGAR DE NACIM1ENTO\nMADRID\n"
     ),
+    # Caso real: la filiación acababa metida dentro del domicilio
+    "reverso completo con HIJO/A DE": (
+        "DOMICILIO\nCL EJEMPLO 12 3 B\nMADRID\nMADRID / MADRID\n"
+        "LUGAR DE NACIMIENTO\nALICANTE\nHIJO/A DE\nJUAN Y ANA\n"
+    ),
+    "HIJO mal leído (H1JO)": (
+        "DOMICILIO\nCL EJEMPLO 12 3 B\nMADRID\nMADRID / MADRID\n"
+        "H1JO/A DE\nJUAN Y ANA\n"
+    ),
+    "sin ninguna etiqueta de corte reconocida": (
+        "DOMICILIO\nCL EJEMPLO 12 3 B\nMADRID\nMADRID / MADRID\n"
+        "JUAN Y ANA\nOTRA COSA\n"
+    ),
 }
 
 
@@ -69,8 +82,15 @@ def main() -> int:
     print("\n  Domicilio:")
     for titulo, texto in DOMICILIOS.items():
         bloque = P.extraer_bloque_domicilio(texto)
-        obtenido = bloque.get("direccion") if bloque else None
-        correcto = obtenido == "CL EJEMPLO 12 3 B"
+        obtenido = P.formatear_domicilio(bloque)
+        # Ni se pierde la dirección ni se cuela la filiación del bloque
+        # siguiente (JUAN Y ANA) ni el lugar de nacimiento (ALICANTE).
+        correcto = bool(
+            obtenido
+            and "EJEMPLO" in obtenido
+            and "JUAN" not in obtenido
+            and "ALICANTE" not in obtenido
+        )
 
         if not correcto:
             fallos.append(titulo)

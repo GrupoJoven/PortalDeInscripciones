@@ -57,6 +57,11 @@ más fiable de que el OCR ha leído bien el número.
 | `DNI_OCR_MAX_BYTES`       | No          | Tamaño máximo por imagen (por defecto 8 MB).           |
 | `DNI_OCR_PRESUPUESTO_SEGUNDOS` | No     | Tiempo máximo por documento (por defecto 100 s).       |
 | `OMP_THREAD_LIMIT`        | No          | Hilos de Tesseract (1 en el Dockerfile; ver Rendimiento). |
+| `DNI_OCR_PSM`             | No          | Modos de segmentación a probar, separados por comas (por defecto `11,3`). |
+
+`DNI_OCR_PSM` se puede cambiar desde el panel del proveedor **sin reconstruir
+la imagen**: basta con reiniciar el servicio. Sirve para comparar modos sobre
+documentos reales, que es lo único que decide de verdad cuál va mejor.
 
 Genera el secreto con:
 
@@ -328,8 +333,13 @@ python3 test_etiquetas_rotas.py  # tolerancia a "SEXOQ" y demás deformaciones
   | `--psm 6` | 4, pero pierde el domicilio |
   | `--psm 11` | 3, pierde NOMBRE |
 
-  Así que se usa `--psm 3`, y el idioma se prueba primero en español y luego
-  en inglés, que es con lo que el original funcionaba sobre DNI reales.
+  **Pero una imagen sintética no es un DNI real**: no tiene el ruido de la
+  cámara, ni el holograma, ni el relieve, ni la trama de seguridad. Sobre
+  documentos de verdad, `--psm 11` dio mejor resultado, así que es el valor
+  por defecto, con `--psm 3` de respaldo. Se cambia con `DNI_OCR_PSM`.
+
+  El idioma se prueba primero en español y luego en inglés, que es con lo que
+  el original funcionaba sobre DNI reales.
 - **Varias pasadas de OCR, pero solo si hacen falta.** Se prueban `--psm 11`,
   `6` y `4` en ese orden y se corta en cuanto una reconoce suficientes
   etiquetas. Recorrerlas siempre triplicaba el tiempo sin mejorar nada.
