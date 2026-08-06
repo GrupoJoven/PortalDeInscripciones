@@ -15,7 +15,9 @@ imágenes en memoria en lugar de rutas de fichero, con validaciones extra:
 from __future__ import annotations
 
 import logging
+import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -32,12 +34,23 @@ LETRAS_CONTROL = "TRWAGMYFPDXBNJZSQVHLCKE"
 
 # Los --psm que mejor funcionan con el reverso (texto disperso) y con el
 # anverso (bloques de texto). Se prueban en orden y se puntúa el resultado.
-PSM_A_PROBAR = (11, 6, 4)
+# Cada pasada de Tesseract sobre una tarjeta cuesta ~1 s en un servidor
+# normal y hasta 10 s en una instancia compartida de 0,1 CPU, así que el
+# número de pasadas es LO que determina si la petición termina a tiempo.
+#
+# --psm 4 (una columna de tamaños variables) va primero porque además de leer
+# bien agrupa las líneas de forma utilizable, que es lo que necesita la
+# extracción por posición. --psm 11 (texto disperso) queda como respaldo.
+PSM_A_PROBAR = (4, 11)
 
 # Puntuación a partir de la cual no merece la pena probar más configuraciones:
-# equivale a haber reconocido 3 etiquetas del documento. En la práctica la
-# primera pasada ya llega, así que esto evita 2 de cada 3 llamadas a Tesseract.
-PUNTUACION_SUFICIENTE = 300
+# equivale a haber reconocido 2 etiquetas del documento.
+PUNTUACION_SUFICIENTE = 200
+
+# Tiempo máximo para procesar un documento completo. Al agotarse se devuelve
+# lo que se haya podido leer en vez de seguir y agotar el tiempo de espera de
+# quien llama, que es peor: así al menos se sabe qué campo ha fallado.
+PRESUPUESTO_SEGUNDOS = float(os.environ.get("DNI_OCR_PRESUPUESTO_SEGUNDOS", 70))
 
 # Ancho al que se normaliza el recorte antes del OCR.
 #
@@ -323,50 +336,64 @@ def parsear_mrz(lineas: list[str]) -> dict:
     return resultado
 
 
-def leer_mrz(imagen_reverso: np.ndarray) -> dict:
+MRZ_VACIO = {
+    "numero": None,
+    "nombre": None,
+    "apellidos": None,
+    "numero_valido": False,
+    "nombre_completo_garantizado": False,
+}
+
+
+def leer_mrz(imagen_reverso: np.ndarray, deadline: float | None = None) -> dict:
     """Recorta la franja inferior del reverso y lee el MRZ.
 
-    El MRZ ocupa aproximadamente el tercio inferior de la tarjeta. Aislarlo y
-    leerlo con un alfabeto restringido da muchos menos errores que buscarlo
-    dentro del texto de toda la cara.
+    Como mucho hace dos pasadas de Tesseract: la franja tal cual y, si de ahí
+    no sale nada, la misma binarizada. La versión anterior probaba tres
+    recortes por dos variantes, seis pasadas, y en un servidor de 0,1 CPU eso
+    solo eran cuarenta segundos tirados cada vez que la cara no llevaba MRZ.
     """
-    alto, ancho = imagen_reverso.shape[:2]
+    alto = imagen_reverso.shape[0]
 
-    # Se prueban varios recortes por si la tarjeta viene con más o menos
-    # margen del esperado.
-    for desde in (0.62, 0.55, 0.70):
-        franja = imagen_reverso[int(alto * desde) :, :]
+    franja = imagen_reverso[int(alto * 0.60) :, :]
 
-        if franja.size == 0:
+    if franja.size == 0:
+        return dict(MRZ_VACIO)
+
+    for etiqueta, imagen in (("directa", franja), ("binarizada", None)):
+        if _sin_tiempo(deadline):
+            logger.warning("Sin tiempo para seguir intentando leer el MRZ")
+            break
+
+        if imagen is None:
+            imagen = preprocesar_recorte_para_ocr(franja)
+
+        try:
+            texto = pytesseract.image_to_string(imagen, config=CONFIG_MRZ)
+        except pytesseract.TesseractError as error:
+            logger.warning("Tesseract ha fallado leyendo el MRZ: %s", error)
             continue
 
-        for imagen in (franja, preprocesar_recorte_para_ocr(franja)):
-            try:
-                texto = pytesseract.image_to_string(imagen, config=CONFIG_MRZ)
-            except pytesseract.TesseractError as error:
-                logger.warning("Tesseract ha fallado leyendo el MRZ: %s", error)
-                continue
+        lineas = localizar_lineas_mrz(texto)
 
-            lineas = localizar_lineas_mrz(texto)
+        if not lineas:
+            continue
 
-            if not lineas:
-                continue
+        datos = parsear_mrz(lineas)
 
-            datos = parsear_mrz(lineas)
-
-            # Nos quedamos con la primera lectura que dé nombre o número.
-            if datos.get("nombre") or datos.get("numero"):
-                logger.info(
-                    "MRZ leído (recorte %.0f%%): numero=%s valido=%s nombre=%s",
-                    desde * 100,
-                    datos.get("numero"),
-                    datos.get("numero_valido"),
-                    bool(datos.get("nombre")),
-                )
-                return datos
+        if datos.get("nombre") or datos.get("numero"):
+            logger.info(
+                "MRZ leído (%s): numero=%s valido=%s nombre=%s completo=%s",
+                etiqueta,
+                datos.get("numero"),
+                datos.get("numero_valido"),
+                bool(datos.get("nombre")),
+                datos.get("nombre_completo_garantizado"),
+            )
+            return datos
 
     logger.info("No se ha podido leer el MRZ del reverso")
-    return {"numero": None, "nombre": None, "apellidos": None, "numero_valido": False}
+    return dict(MRZ_VACIO)
 
 
 # ---------------------------------------------------------------------------
@@ -1044,24 +1071,56 @@ class ResultadoCara:
     avisos: list[str] = field(default_factory=list)
 
 
-def procesar_cara(imagen: np.ndarray) -> ResultadoCara:
-    """Procesa una cara del documento y decide si es anverso o reverso."""
+@dataclass
+class CaraLeida:
+    recorte: np.ndarray
+    texto: str
+    lineas: list[LineaOCR]
+
+
+INDICIOS_ANVERSO = ("APELLIDOS", "SURNAME", "NOMBRE", "SEXO", "NACIONALIDAD", "VALIDEZ")
+INDICIOS_REVERSO = ("DOMICILIO", "ADDRESS", "IDESP", "LUGAR DE NACIM", "HIJO", "EQUIPO")
+
+
+def _sin_tiempo(deadline: float | None) -> bool:
+    return deadline is not None and time.monotonic() >= deadline
+
+
+def _puntuar_cara(texto: str) -> int:
+    """Positivo si parece el anverso, negativo si parece el reverso."""
+    mayusculas = texto.upper()
+
+    anverso = sum(1 for i in INDICIOS_ANVERSO if i in mayusculas)
+    reverso = sum(1 for i in INDICIOS_REVERSO if i in mayusculas)
+
+    return anverso - reverso
+
+
+def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
+    """Hace el OCR de una cara. No decide todavía si es anverso o reverso."""
     recorte = _preparar_para_ocr(imagen)
 
     texto, lineas = ocr_con_posiciones(recorte)
 
     # Si el OCR en color va flojo, reintentar con la versión binarizada.
-    if _puntuar_texto_ocr(texto) < 100:
+    if _puntuar_texto_ocr(texto) < 100 and not _sin_tiempo(deadline):
         texto_binario, lineas_binario = ocr_con_posiciones(
-            preprocesar_recorte_para_ocr(recorte)
+            preprocesar_recorte_para_ocr(recorte),
+            configuraciones=CONFIGURACIONES_OCR[:1],
         )
         if _puntuar_texto_ocr(texto_binario) > _puntuar_texto_ocr(texto):
             texto, lineas = texto_binario, lineas_binario
 
-    es_anverso = bool(
-        re.search(r"\bNACIONALIDAD\b", texto, flags=re.IGNORECASE)
-        or re.search(r"\bAPELLIDOS\b", texto, flags=re.IGNORECASE)
-    )
+    return CaraLeida(recorte=recorte, texto=texto, lineas=lineas)
+
+
+def extraer_de_cara(
+    cara: CaraLeida,
+    es_anverso: bool,
+    deadline: float | None = None,
+) -> ResultadoCara:
+    """Extrae los campos de una cara ya leída y ya clasificada."""
+    texto, lineas, recorte = cara.texto, cara.lineas, cara.recorte
 
     if es_anverso:
         # Primero por posición (etiquetas APELLIDOS y NOMBRE con sus líneas
@@ -1087,7 +1146,7 @@ def procesar_cara(imagen: np.ndarray) -> ResultadoCara:
         domicilio = extraer_bloque_domicilio(texto)
 
     # El MRZ da el número con dígito de control, que es lo más fiable.
-    mrz = leer_mrz(recorte)
+    mrz = leer_mrz(recorte, deadline=deadline)
 
     numero = mrz.get("numero") or extraer_dni_reverso(texto)
 
@@ -1112,6 +1171,20 @@ def procesar_cara(imagen: np.ndarray) -> ResultadoCara:
     )
 
 
+def procesar_cara(imagen: np.ndarray, es_anverso: bool | None = None) -> ResultadoCara:
+    """Lee y extrae una cara suelta, decidiendo ella misma de cuál se trata.
+
+    `extraer_datos` no usa esta función: clasifica las dos caras a la vez, que
+    es más fiable. Se mantiene por comodidad para pruebas y uso manual.
+    """
+    cara = leer_cara(imagen)
+
+    if es_anverso is None:
+        es_anverso = _puntuar_cara(cara.texto) > 0
+
+    return extraer_de_cara(cara, es_anverso)
+
+
 def formatear_domicilio(domicilio: dict | None) -> str | None:
     if not domicilio:
         return None
@@ -1133,19 +1206,54 @@ def formatear_domicilio(domicilio: dict | None) -> str | None:
     return ", ".join(sin_duplicados) if sin_duplicados else None
 
 
-def extraer_datos(anverso: np.ndarray, reverso: np.ndarray) -> dict[str, Any]:
-    """Procesa ambas caras y consolida nombre, número de DNI y domicilio."""
-    caras = [procesar_cara(anverso), procesar_cara(reverso)]
+def extraer_datos(
+    anverso: np.ndarray,
+    reverso: np.ndarray,
+    presupuesto_segundos: float | None = None,
+) -> dict[str, Any]:
+    """Procesa ambas caras y consolida nombre, número de DNI y domicilio.
+
+    Las dos caras se clasifican comparándolas entre sí, no una a una. Cuando
+    cada cara decidía por su cuenta, un anverso con el OCR flojo podía darse
+    por reverso: entonces se buscaba en él un MRZ inexistente (pasadas de
+    Tesseract tiradas) y, lo que es peor, no se le buscaba el nombre.
+    """
+    inicio = time.monotonic()
+
+    if presupuesto_segundos is None:
+        presupuesto_segundos = PRESUPUESTO_SEGUNDOS
+
+    deadline = inicio + presupuesto_segundos
+
+    leidas = [leer_cara(anverso, deadline=deadline), leer_cara(reverso, deadline=deadline)]
+
+    logger.info("OCR de las dos caras en %.1f s", time.monotonic() - inicio)
+
+    puntuaciones = [_puntuar_cara(c.texto) for c in leidas]
+
+    indice_anverso = 0 if puntuaciones[0] >= puntuaciones[1] else 1
+    indice_reverso = 1 - indice_anverso
+
+    logger.info(
+        "Clasificación de caras: puntuaciones=%s -> anverso=%s",
+        puntuaciones,
+        "primera" if indice_anverso == 0 else "segunda",
+    )
+
+    cara_anverso = extraer_de_cara(leidas[indice_anverso], True, deadline=deadline)
+    cara_reverso = extraer_de_cara(leidas[indice_reverso], False, deadline=deadline)
+
+    caras = [cara_anverso, cara_reverso]
+    delanteras = [cara_anverso]
+    traseras = [cara_reverso]
 
     avisos: list[str] = []
 
-    delanteras = [c for c in caras if c.es_anverso]
-    traseras = [c for c in caras if not c.es_anverso]
+    if max(puntuaciones) <= 0:
+        avisos.append("No se ha reconocido bien ninguna de las dos caras.")
 
-    if not delanteras:
-        avisos.append("No se ha reconocido el anverso del documento.")
-    if not traseras:
-        avisos.append("No se ha reconocido el reverso del documento.")
+    if time.monotonic() >= deadline:
+        avisos.append("La lectura ha agotado el tiempo disponible.")
 
     # El nombre se lee del anverso, que es donde aparece completo. El del MRZ
     # (reverso) solo llega aquí si se pudo garantizar que no venía truncado.
@@ -1172,6 +1280,14 @@ def extraer_datos(anverso: np.ndarray, reverso: np.ndarray) -> dict[str, Any]:
         avisos.append("No se ha podido leer el número de DNI.")
 
     domicilio_texto = formatear_domicilio(domicilio)
+
+    logger.info(
+        "Extracción terminada en %.1f s: numero=%s nombre=%s domicilio=%s",
+        time.monotonic() - inicio,
+        bool(numero),
+        bool(nombre),
+        bool(domicilio_texto),
+    )
 
     return {
         "numero": numero,

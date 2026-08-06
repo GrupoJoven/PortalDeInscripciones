@@ -55,6 +55,7 @@ más fiable de que el OCR ha leído bien el número.
 | `PORT`                    | No          | Puerto de escucha (por defecto `8080`).                |
 | `DNI_OCR_WORKERS`         | No          | Hilos para OCR simultáneo (por defecto `2`).           |
 | `DNI_OCR_MAX_BYTES`       | No          | Tamaño máximo por imagen (por defecto 8 MB).           |
+| `DNI_OCR_PRESUPUESTO_SEGUNDOS` | No     | Tiempo máximo por documento (por defecto 70 s).        |
 
 Genera el secreto con:
 
@@ -150,12 +151,43 @@ el alfabeto restringido a `A-Z`, `0-9` y `<`, y con los diccionarios
 desactivados, para que no intente "corregir" el texto convirtiéndolo en
 palabras.
 
+### Rendimiento: el número de pasadas de Tesseract lo es todo
+
+Cada pasada cuesta ~1 s en un servidor normal y hasta 10 s en una instancia
+compartida de 0,1 CPU, así que el tiempo total depende casi por completo de
+cuántas veces se llame a Tesseract. El objetivo es **3 o 4 por documento**.
+
+Lo que lo mantiene bajo:
+
+- Se prueban como mucho dos segmentaciones (`--psm 4` y `--psm 11`) y se corta
+  en cuanto una reconoce dos etiquetas del documento.
+- **Las dos caras se clasifican comparándolas entre sí**, no una a una. Si cada
+  cara decide por su cuenta, un anverso con el OCR flojo puede darse por
+  reverso: entonces se le buscaba un MRZ inexistente (hasta 6 pasadas tiradas)
+  y, peor aún, no se le buscaba el nombre.
+- `leer_mrz` hace dos pasadas como mucho (la franja tal cual y binarizada) y
+  solo se ejecuta sobre la cara clasificada como reverso.
+- Hay un **presupuesto de tiempo** (`DNI_OCR_PRESUPUESTO_SEGUNDOS`, 70 s por
+  defecto): al agotarse se devuelve lo que se haya podido leer en vez de seguir
+  y provocar un tiempo de espera agotado en quien llama. Así al menos se sabe
+  qué campo ha fallado.
+
+Los logs indican en qué se va el tiempo:
+
+```
+INFO:app.pipeline:OCR de las dos caras en 12.4 s
+INFO:app.pipeline:Clasificación de caras: puntuaciones=[4, -3] -> anverso=primera
+INFO:app.pipeline:MRZ leído (directa): numero=12345678Z valido=True nombre=True completo=True
+INFO:app.pipeline:Extracción terminada en 18.9 s: numero=True nombre=True domicilio=True
+```
+
 ### Pruebas
 
 ```bash
 cd dni-ocr-service
-python3 test_mrz.py      # lectura y dígitos de control del MRZ
-python3 test_nombre.py   # nombre por posición, incluido un nombre muy largo
+python3 test_pipeline.py  # extracción de campos y consolidación
+python3 test_mrz.py       # lectura y dígitos de control del MRZ
+python3 test_nombre.py    # nombre por posición, incluido un nombre muy largo
 ```
 
 ## Cambios respecto al código original
