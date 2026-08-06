@@ -377,6 +377,7 @@ select cron.schedule(
 | El móvil dice "No se ha podido abrir la cámara" | Estás en `http://` o denegaste el permiso | Usa la web publicada (HTTPS) y acepta el permiso |
 | Se queda en "Leyendo el documento..." y falla | Render estaba dormido o va muy justo de CPU | Pulsa **"Reintentar la lectura"**: las fotos siguen guardadas y no hay que repetirlas. Si pasa siempre, plan de pago |
 | Pide repetir la foto del reverso una y otra vez | Versión anterior: cualquier fallo del servidor se trataba como foto ilegible | Redespliega `dni-verification-upload` |
+| Falla la lectura y en los logs de Render no aparece ninguna petición `POST /extract` | La Edge Function no llegó a enviarla | Mira los logs de Supabase: registra la URL a la que llama y un diagnóstico de `/health` |
 | Lee el DNI pero el formulario sale vacío | Faltan las dos funciones modificadas del paso 6 | Redespliega `start-public-form-email-access` y `verify-public-form-email-token` |
 | Los datos leídos salen con errores raros | `"spanish":false` en `/health` | El paquete de español no se instaló; avísame |
 | El marco nunca se pone verde | Umbrales del comprobador de encuadre | Espera 6 s y usa **"Hacer la foto igualmente"**. Para diagnosticarlo, toca el mensaje de aviso: se despliegan los números que está midiendo |

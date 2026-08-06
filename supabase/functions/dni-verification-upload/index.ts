@@ -14,6 +14,9 @@ const MAX_ATTEMPTS = 20;
 // contenedor: hay que sumar el arranque en frío a la lectura en sí.
 const OCR_TIMEOUT_MS = 110_000;
 
+/** Validez de los enlaces firmados que se pasan al servicio de OCR. */
+const SIGNED_URL_TTL_SECONDS = 180;
+
 type SessionRow = {
   id: string;
   status: string;
@@ -115,27 +118,13 @@ Deno.serve(async (req) => {
         );
       }
 
-      const frontBytes = await downloadImage(supabase, session.front_path);
-      const backBytes = await downloadImage(supabase, session.back_path);
-
-      if (!frontBytes || !backBytes) {
-        return jsonResponse(
-          {
-            ok: false,
-            error: "images_unavailable",
-            message: "No se han podido recuperar las fotos. Vuelve a hacerlas.",
-          },
-          410,
-        );
-      }
-
       return await extraerYGuardar({
         supabase,
         sessionId: session.id,
         ocrUrl,
         ocrSecret,
-        frontBytes,
-        backBytes,
+        frontPath: session.front_path,
+        backPath: session.back_path,
       });
     }
 
@@ -205,28 +194,13 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: true, status: "front_uploaded" });
     }
 
-    const frontBytes = side === "front" ? bytes : await downloadImage(supabase, frontPath!);
-    const backBytes = side === "back" ? bytes : await downloadImage(supabase, backPath!);
-
-    if (!frontBytes || !backBytes) {
-      await marcarFallo(supabase, session.id, "No se han podido recuperar las dos fotos.");
-      return jsonResponse(
-        {
-          ok: false,
-          error: "images_unavailable",
-          message: "No se han podido recuperar las dos fotos. Vuelve a hacerlas.",
-        },
-        500,
-      );
-    }
-
     return await extraerYGuardar({
       supabase,
       sessionId: session.id,
       ocrUrl,
       ocrSecret,
-      frontBytes,
-      backBytes,
+      frontPath: frontPath!,
+      backPath: backPath!,
     });
   } catch (error) {
     console.error("Error no controlado en dni-verification-upload:", error);
@@ -253,25 +227,36 @@ async function extraerYGuardar({
   sessionId,
   ocrUrl,
   ocrSecret,
-  frontBytes,
-  backBytes,
+  frontPath,
+  backPath,
 }: {
   supabase: ReturnType<typeof createClient>;
   sessionId: string;
   ocrUrl: string;
   ocrSecret: string;
-  frontBytes: Uint8Array;
-  backBytes: Uint8Array;
+  frontPath: string;
+  backPath: string;
 }) {
+  const frontUrl = await crearEnlaceFirmado(supabase, frontPath);
+  const backUrl = await crearEnlaceFirmado(supabase, backPath);
+
+  if (!frontUrl || !backUrl) {
+    await marcarFallo(supabase, sessionId, "No se han podido preparar las fotos.");
+
+    return jsonResponse(
+      {
+        ok: false,
+        error: "images_unavailable",
+        message: "No se han podido recuperar las fotos. Vuelve a hacerlas.",
+      },
+      500,
+    );
+  }
+
   let extracted: Record<string, unknown>;
 
   try {
-    extracted = await callOcrService({
-      ocrUrl,
-      ocrSecret,
-      frontB64: encodeBase64(frontBytes),
-      backB64: encodeBase64(backBytes),
-    });
+    extracted = await callOcrService({ ocrUrl, ocrSecret, frontUrl, backUrl });
   } catch (error) {
     const esTimeout = error instanceof DOMException && error.name === "AbortError";
 
@@ -281,6 +266,9 @@ async function extraerYGuardar({
         : "Error llamando al servicio de OCR:",
       error,
     );
+
+    // Deja constancia en los logs de si el servicio responde siquiera.
+    console.error(`Diagnóstico: ${await diagnosticarServicio(ocrUrl)}`);
 
     // No se marca como 'failed': las fotos siguen guardadas y sirven.
     await supabase
@@ -340,30 +328,43 @@ async function extraerYGuardar({
   });
 }
 
+/**
+ * Llama al servicio de OCR pasándole enlaces firmados a las fotos.
+ *
+ * Antes se le mandaban las dos imágenes en base64 dentro del JSON: entre 2 y
+ * 3 MB por petición que esta función tenía que decodificar, subir a Storage y
+ * volver a codificar. Las Edge Functions tienen un límite de CPU muy ajustado
+ * y eso bastaba para que la petición ni llegara a salir. Ahora solo viajan dos
+ * URL cortas y es el servicio quien descarga las fotos.
+ */
 async function callOcrService({
   ocrUrl,
   ocrSecret,
-  frontB64,
-  backB64,
+  frontUrl,
+  backUrl,
 }: {
   ocrUrl: string;
   ocrSecret: string;
-  frontB64: string;
-  backB64: string;
+  frontUrl: string;
+  backUrl: string;
 }): Promise<Record<string, unknown>> {
+  const endpoint = `${ocrUrl.replace(/\/$/, "")}/extract`;
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), OCR_TIMEOUT_MS);
 
   const inicio = Date.now();
 
+  console.log(`Llamando al servicio de OCR: ${endpoint}`);
+
   try {
-    const response = await fetch(`${ocrUrl.replace(/\/$/, "")}/extract`, {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Service-Secret": ocrSecret,
       },
-      body: JSON.stringify({ front_b64: frontB64, back_b64: backB64 }),
+      body: JSON.stringify({ front_url: frontUrl, back_url: backUrl }),
       signal: controller.signal,
     });
 
@@ -380,18 +381,45 @@ async function callOcrService({
   }
 }
 
-async function downloadImage(
+/**
+ * Cuando la llamada al OCR falla, comprueba si el servicio responde siquiera.
+ * Distingue "no llego al servicio" (URL mal, servicio caído) de "el servicio
+ * está vivo pero se atasca procesando", que se arreglan de formas distintas.
+ */
+async function diagnosticarServicio(ocrUrl: string): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+
+  try {
+    const response = await fetch(`${ocrUrl.replace(/\/$/, "")}/health`, {
+      signal: controller.signal,
+    });
+
+    const cuerpo = await response.text().catch(() => "");
+
+    return `/health respondió ${response.status}: ${cuerpo.slice(0, 200)}`;
+  } catch (error) {
+    return `/health tampoco responde (${error instanceof Error ? error.message : error})`;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** Enlace firmado y efímero para que el servicio de OCR descargue una foto. */
+async function crearEnlaceFirmado(
   supabase: ReturnType<typeof createClient>,
   path: string,
-): Promise<Uint8Array | null> {
-  const { data, error } = await supabase.storage.from(BUCKET).download(path);
+): Promise<string | null> {
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
 
-  if (error || !data) {
-    console.error("Error descargando imagen:", error);
+  if (error || !data?.signedUrl) {
+    console.error("Error creando enlace firmado:", error);
     return null;
   }
 
-  return new Uint8Array(await data.arrayBuffer());
+  return data.signedUrl;
 }
 
 async function marcarFallo(
@@ -418,17 +446,6 @@ function decodeBase64Image(value: string): Uint8Array {
   }
 
   return bytes;
-}
-
-function encodeBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const chunk = 0x8000;
-
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-
-  return btoa(binary);
 }
 
 /** Cabecera JFIF/EXIF: el móvil siempre envía JPEG. */

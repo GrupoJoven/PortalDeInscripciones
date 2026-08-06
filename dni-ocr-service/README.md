@@ -13,7 +13,14 @@ Vercel incluyen el binario de Tesseract.
 | `GET`  | `/health`  | Comprobación de vida, sin autenticación.        |
 | `POST` | `/extract` | Extrae los datos. Requiere `X-Service-Secret`. |
 
-Cuerpo de `/extract`:
+Cuerpo de `/extract`. Lo normal es pasar enlaces firmados de Supabase Storage,
+que el servicio descarga por su cuenta:
+
+```json
+{ "front_url": "https://...", "back_url": "https://..." }
+```
+
+También admite las imágenes en base64, sobre todo para pruebas manuales:
 
 ```json
 { "front_b64": "<base64 del anverso>", "back_b64": "<base64 del reverso>" }

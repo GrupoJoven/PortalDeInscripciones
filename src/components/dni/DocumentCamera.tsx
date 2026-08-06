@@ -271,9 +271,9 @@ export default function DocumentCamera({
         guide,
       );
 
-      // Limitamos el lado mayor: más resolución no mejora el OCR y sí
-      // engorda mucho la subida desde datos móviles.
-      const anchoDestino = Math.min(1600, Math.round(sw));
+      // El servicio de OCR normaliza el recorte a 1500 px de ancho, así que
+      // mandar más resolución solo engorda la subida desde datos móviles.
+      const anchoDestino = Math.min(1500, Math.round(sw));
       const altoDestino = Math.round((anchoDestino * sh) / sw);
 
       const lienzo = document.createElement('canvas');
@@ -289,7 +289,7 @@ export default function DocumentCamera({
 
       ctx.drawImage(video, sx, sy, sw, sh, 0, 0, anchoDestino, altoDestino);
 
-      const dataUrl = lienzo.toDataURL('image/jpeg', 0.92);
+      const dataUrl = lienzo.toDataURL('image/jpeg', 0.86);
       const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
 
       onCapture(base64, dataUrl);
