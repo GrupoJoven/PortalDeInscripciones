@@ -168,10 +168,15 @@ unos 50 segundos en despertar. La primera persona que verifique su DNI después
 de un rato de inactividad se quedará esperando casi un minuto, y puede llegar a
 fallar.
 
-- **Para probar**: el plan gratuito vale.
+Además, la instancia gratuita comparte 0,1 de CPU, así que la lectura del
+documento tarda del orden de 15-30 segundos en lugar de 2-3.
+
+- **Para probar**: el plan gratuito vale. Si la lectura falla por tardar
+  demasiado, en el móvil aparece **"Reintentar la lectura"**: reaprovecha las
+  fotos ya subidas y, con el contenedor ya despierto, suele funcionar.
 - **Para el periodo de inscripciones**: pásate al plan de pago más barato
-  (unos 7 $/mes), que no se duerme. Puedes cambiarlo el día antes de abrir
-  las inscripciones y volver al gratuito después.
+  (unos 7 $/mes), que no se duerme y da CPU completa. Puedes cambiarlo el día
+  antes de abrir las inscripciones y volver al gratuito después.
 
 **Comprobación:** cuando Render diga "Live", copia la URL que te da (algo como
 `https://dni-ocr.onrender.com`) y ábrela en el navegador añadiendo `/health`:
@@ -370,7 +375,8 @@ select cron.schedule(
 | --- | --- | --- |
 | El QR lleva a una página en blanco o de error | `APP_BASE_URL` mal configurada | Paso 5, punto 3 |
 | El móvil dice "No se ha podido abrir la cámara" | Estás en `http://` o denegaste el permiso | Usa la web publicada (HTTPS) y acepta el permiso |
-| Se queda en "Leyendo el documento..." un minuto y falla | Render estaba dormido | Vuelve a intentarlo enseguida; para producción, plan de pago |
+| Se queda en "Leyendo el documento..." y falla | Render estaba dormido o va muy justo de CPU | Pulsa **"Reintentar la lectura"**: las fotos siguen guardadas y no hay que repetirlas. Si pasa siempre, plan de pago |
+| Pide repetir la foto del reverso una y otra vez | Versión anterior: cualquier fallo del servidor se trataba como foto ilegible | Redespliega `dni-verification-upload` |
 | Lee el DNI pero el formulario sale vacío | Faltan las dos funciones modificadas del paso 6 | Redespliega `start-public-form-email-access` y `verify-public-form-email-token` |
 | Los datos leídos salen con errores raros | `"spanish":false` en `/health` | El paquete de español no se instaló; avísame |
 | El marco nunca se pone verde | Umbrales del comprobador de encuadre | Espera 6 s y usa **"Hacer la foto igualmente"**. Para diagnosticarlo, toca el mensaje de aviso: se despliegan los números que está midiendo |

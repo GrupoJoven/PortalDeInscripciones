@@ -34,6 +34,19 @@ LETRAS_CONTROL = "TRWAGMYFPDXBNJZSQVHLCKE"
 # anverso (bloques de texto). Se prueban en orden y se puntúa el resultado.
 PSM_A_PROBAR = (11, 6, 4)
 
+# Puntuación a partir de la cual no merece la pena probar más configuraciones:
+# equivale a haber reconocido 3 etiquetas del documento. En la práctica la
+# primera pasada ya llega, así que esto evita 2 de cada 3 llamadas a Tesseract.
+PUNTUACION_SUFICIENTE = 300
+
+# Ancho al que se normaliza el recorte antes del OCR.
+#
+# Medido: por debajo de ~1300 px Tesseract empieza a perder las etiquetas
+# pequeñas del documento ("NACIONALIDAD", "APELLIDOS"...), y al perderlas ya no
+# se alcanza PUNTUACION_SUFICIENTE, así que se acaban probando las tres
+# configuraciones y encima el resultado es peor: más lento y menos preciso.
+ANCHO_OCR = 1500
+
 
 def idioma_disponible() -> str:
     """Idioma de Tesseract a usar: 'spa' si está instalado, si no 'eng'.
@@ -106,8 +119,18 @@ def normalizar_espacios(texto: str) -> str:
 # OCR
 # ---------------------------------------------------------------------------
 
-def ocr(imagen: np.ndarray, configuraciones: tuple[str, ...] | None = None) -> str:
-    """Ejecuta OCR con varias configuraciones y devuelve el texto más rico."""
+def ocr(
+    imagen: np.ndarray,
+    configuraciones: tuple[str, ...] | None = None,
+    puntuacion_suficiente: float = PUNTUACION_SUFICIENTE,
+) -> str:
+    """Ejecuta OCR probando configuraciones hasta dar con una lo bastante buena.
+
+    Se para en cuanto una pasada reconoce suficientes etiquetas del documento.
+    Recorrer siempre las tres multiplicaba por tres el tiempo sin mejorar el
+    resultado, y en un servidor modesto eso bastaba para agotar el tiempo de
+    espera de la función que lo llama.
+    """
     # Se lee en tiempo de llamada, no como valor por defecto, para poder
     # sustituirlo en pruebas y para respetar el idioma detectado al arrancar.
     configuraciones = configuraciones or CONFIGURACIONES_OCR
@@ -129,6 +152,9 @@ def ocr(imagen: np.ndarray, configuraciones: tuple[str, ...] | None = None) -> s
         if puntuacion > mejor_puntuacion:
             mejor_puntuacion = puntuacion
             mejor_texto = texto
+
+        if puntuacion >= puntuacion_suficiente:
+            break
 
     if errores == len(configuraciones):
         raise RuntimeError(
@@ -509,11 +535,17 @@ def _preparar_para_ocr(imagen: np.ndarray) -> np.ndarray:
         if recorte.shape[0] > recorte.shape[1]:
             recorte = cv2.rotate(recorte, cv2.ROTATE_90_CLOCKWISE)
 
-    # Escalar a una altura de trabajo cómoda para Tesseract.
-    alto, ancho = recorte.shape[:2]
-    objetivo = 1000
-    if alto < objetivo:
-        factor = objetivo / alto
+    # Normalizar el ancho: ni tan pequeño que Tesseract no lea, ni tan grande
+    # que tarde de más para nada.
+    ancho = recorte.shape[1]
+
+    if ancho > ANCHO_OCR * 1.15:
+        factor = ANCHO_OCR / ancho
+        recorte = cv2.resize(
+            recorte, None, fx=factor, fy=factor, interpolation=cv2.INTER_AREA
+        )
+    elif ancho < ANCHO_OCR * 0.75:
+        factor = ANCHO_OCR / ancho
         recorte = cv2.resize(
             recorte, None, fx=factor, fy=factor, interpolation=cv2.INTER_CUBIC
         )

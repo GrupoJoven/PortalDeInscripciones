@@ -193,6 +193,8 @@ export interface DniUploadResponse {
   extracted?: DniExtractedData | null;
   error?: string;
   message?: string;
+  /** true si el fallo es del servicio de lectura y las fotos siguen valiendo. */
+  can_retry?: boolean;
 }
 
 export const toDatetimeLocalValue = (iso: string | null) => {

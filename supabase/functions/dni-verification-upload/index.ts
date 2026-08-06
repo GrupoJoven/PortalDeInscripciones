@@ -8,8 +8,11 @@ const corsHeaders = {
 
 const BUCKET = "dni_uploads";
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-const MAX_ATTEMPTS = 12;
-const OCR_TIMEOUT_MS = 60_000;
+const MAX_ATTEMPTS = 20;
+
+// El servicio de OCR puede tardar bastante si está en un plan que duerme el
+// contenedor: hay que sumar el arranque en frío a la lectura en sí.
+const OCR_TIMEOUT_MS = 110_000;
 
 type SessionRow = {
   id: string;
@@ -24,8 +27,13 @@ type SessionRow = {
  * Recibe una cara del documento desde el móvil, la guarda en el bucket
  * privado y, cuando ya están las dos, llama al servicio de OCR.
  *
- * Las imágenes se conservan solo hasta que el usuario confirma los datos
- * (así puede repetir una sola cara sin volver a hacer las dos fotos).
+ * Admite dos operaciones:
+ *   { side, image_b64 }  -> sube una cara (y extrae si ya están las dos)
+ *   { retry: true }      -> vuelve a intentar la lectura con las fotos ya
+ *                           subidas, sin obligar a repetirlas
+ *
+ * Las imágenes se conservan hasta que el usuario confirma los datos, así que
+ * puede repetir una sola cara sin rehacer las dos fotos.
  */
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -53,10 +61,11 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => null);
     const mobileToken = typeof body?.mobile_token === "string" ? body.mobile_token.trim() : "";
+    const esReintento = body?.retry === true;
     const side = body?.side === "front" || body?.side === "back" ? body.side : null;
     const imageB64 = typeof body?.image_b64 === "string" ? body.image_b64 : "";
 
-    if (!mobileToken || !side || !imageB64) {
+    if (!mobileToken || (!esReintento && (!side || !imageB64))) {
       return jsonResponse({ ok: false, error: "missing_fields" }, 400);
     }
 
@@ -93,6 +102,44 @@ Deno.serve(async (req) => {
       );
     }
 
+    // --- Reintentar la lectura con las fotos ya subidas -------------------
+    if (esReintento) {
+      if (!session.front_path || !session.back_path) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: "missing_images",
+            message: "Faltan fotos por hacer.",
+          },
+          409,
+        );
+      }
+
+      const frontBytes = await downloadImage(supabase, session.front_path);
+      const backBytes = await downloadImage(supabase, session.back_path);
+
+      if (!frontBytes || !backBytes) {
+        return jsonResponse(
+          {
+            ok: false,
+            error: "images_unavailable",
+            message: "No se han podido recuperar las fotos. Vuelve a hacerlas.",
+          },
+          410,
+        );
+      }
+
+      return await extraerYGuardar({
+        supabase,
+        sessionId: session.id,
+        ocrUrl,
+        ocrSecret,
+        frontBytes,
+        backBytes,
+      });
+    }
+
+    // --- Subida de una cara ----------------------------------------------
     if (session.attempts >= MAX_ATTEMPTS) {
       return jsonResponse(
         {
@@ -124,10 +171,7 @@ Deno.serve(async (req) => {
 
     const { error: uploadError } = await supabase.storage
       .from(BUCKET)
-      .upload(path, bytes, {
-        contentType: "image/jpeg",
-        upsert: true,
-      });
+      .upload(path, bytes, { contentType: "image/jpeg", upsert: true });
 
     if (uploadError) {
       console.error("Error subiendo imagen:", uploadError);
@@ -161,13 +205,11 @@ Deno.serve(async (req) => {
       return jsonResponse({ ok: true, status: "front_uploaded" });
     }
 
-    // --- Extracción -----------------------------------------------------
-
     const frontBytes = side === "front" ? bytes : await downloadImage(supabase, frontPath!);
     const backBytes = side === "back" ? bytes : await downloadImage(supabase, backPath!);
 
     if (!frontBytes || !backBytes) {
-      await markFailed(supabase, session.id, "No se han podido recuperar las dos fotos.");
+      await marcarFallo(supabase, session.id, "No se han podido recuperar las dos fotos.");
       return jsonResponse(
         {
           ok: false,
@@ -178,71 +220,125 @@ Deno.serve(async (req) => {
       );
     }
 
-    let extracted: Record<string, unknown>;
-
-    try {
-      extracted = await callOcrService({
-        ocrUrl,
-        ocrSecret,
-        frontB64: encodeBase64(frontBytes),
-        backB64: encodeBase64(backBytes),
-      });
-    } catch (error) {
-      console.error("Error llamando al servicio de OCR:", error);
-      await markFailed(supabase, session.id, "El servicio de lectura no ha respondido.");
-      return jsonResponse(
-        {
-          ok: false,
-          error: "ocr_failed",
-          message: "No hemos podido leer el documento. Inténtalo de nuevo en unos segundos.",
-        },
-        502,
-      );
-    }
-
-    const hasAnyField = Boolean(extracted.numero || extracted.nombre || extracted.domicilio_texto);
-
-    if (!hasAnyField) {
-      await markFailed(
-        supabase,
-        session.id,
-        "No se ha reconocido ningún dato en las fotos.",
-      );
-
-      return jsonResponse({
-        ok: true,
-        status: "failed",
-        message:
-          "No hemos podido leer los datos del documento. Repite las fotos con mejor luz y sin reflejos.",
-      });
-    }
-
-    const { error: saveError } = await supabase
-      .from("dni_verification_sessions")
-      .update({ status: "extracted", extracted, extraction_error: null })
-      .eq("id", session.id);
-
-    if (saveError) {
-      console.error("Error guardando datos extraídos:", saveError);
-      return jsonResponse({ ok: false, error: "internal_error" }, 500);
-    }
-
-    return jsonResponse({
-      ok: true,
-      status: "extracted",
-      extracted: {
-        nombre: extracted.nombre ?? null,
-        numero: extracted.numero ?? null,
-        domicilio_texto: extracted.domicilio_texto ?? null,
-        numero_valido: extracted.numero_valido === true,
-        avisos: Array.isArray(extracted.avisos) ? extracted.avisos : [],
-      },
+    return await extraerYGuardar({
+      supabase,
+      sessionId: session.id,
+      ocrUrl,
+      ocrSecret,
+      frontBytes,
+      backBytes,
     });
   } catch (error) {
     console.error("Error no controlado en dni-verification-upload:", error);
     return jsonResponse({ ok: false, error: "internal_error" }, 500);
   }
 });
+
+/**
+ * Llama al servicio de OCR y guarda el resultado.
+ *
+ * Distingue dos tipos de fallo, porque llevan a acciones muy distintas:
+ *
+ *   - `ocr_unavailable`: el servicio no responde, tarda demasiado o devuelve
+ *     un error. Las fotos pueden estar perfectas: repetirlas no arregla nada,
+ *     lo que procede es reintentar la lectura.
+ *   - `unreadable`: el servicio ha respondido pero no ha reconocido ningún
+ *     dato. Ahí sí hay que repetir las fotos.
+ *
+ * Confundir ambos casos dejaba al usuario repitiendo la foto del reverso en
+ * bucle mientras el problema estaba en el servidor.
+ */
+async function extraerYGuardar({
+  supabase,
+  sessionId,
+  ocrUrl,
+  ocrSecret,
+  frontBytes,
+  backBytes,
+}: {
+  supabase: ReturnType<typeof createClient>;
+  sessionId: string;
+  ocrUrl: string;
+  ocrSecret: string;
+  frontBytes: Uint8Array;
+  backBytes: Uint8Array;
+}) {
+  let extracted: Record<string, unknown>;
+
+  try {
+    extracted = await callOcrService({
+      ocrUrl,
+      ocrSecret,
+      frontB64: encodeBase64(frontBytes),
+      backB64: encodeBase64(backBytes),
+    });
+  } catch (error) {
+    const esTimeout = error instanceof DOMException && error.name === "AbortError";
+
+    console.error(
+      esTimeout
+        ? "El servicio de OCR ha agotado el tiempo de espera"
+        : "Error llamando al servicio de OCR:",
+      error,
+    );
+
+    // No se marca como 'failed': las fotos siguen guardadas y sirven.
+    await supabase
+      .from("dni_verification_sessions")
+      .update({
+        status: "processing",
+        extraction_error: esTimeout ? "timeout" : "servicio_no_disponible",
+      })
+      .eq("id", sessionId);
+
+    return jsonResponse(
+      {
+        ok: false,
+        error: "ocr_unavailable",
+        can_retry: true,
+        message: esTimeout
+          ? "El servicio de lectura ha tardado demasiado. Las fotos están guardadas: puedes reintentar la lectura sin repetirlas."
+          : "El servicio de lectura no está disponible ahora mismo. Las fotos están guardadas: puedes reintentar la lectura sin repetirlas.",
+      },
+      503,
+    );
+  }
+
+  const hasAnyField = Boolean(extracted.numero || extracted.nombre || extracted.domicilio_texto);
+
+  if (!hasAnyField) {
+    await marcarFallo(supabase, sessionId, "No se ha reconocido ningún dato en las fotos.");
+
+    return jsonResponse({
+      ok: true,
+      status: "failed",
+      message:
+        "No hemos podido leer los datos del documento. Repite las fotos con mejor luz y sin reflejos.",
+    });
+  }
+
+  const { error: saveError } = await supabase
+    .from("dni_verification_sessions")
+    .update({ status: "extracted", extracted, extraction_error: null })
+    .eq("id", sessionId);
+
+  if (saveError) {
+    console.error("Error guardando datos extraídos:", saveError);
+    return jsonResponse({ ok: false, error: "internal_error" }, 500);
+  }
+
+  return jsonResponse({
+    ok: true,
+    status: "extracted",
+    extracted: {
+      nombre: extracted.nombre ?? null,
+      numero: extracted.numero ?? null,
+      domicilio_texto: extracted.domicilio_texto ?? null,
+      numero_valido: extracted.numero_valido === true,
+      avisos: Array.isArray(extracted.avisos) ? extracted.avisos : [],
+    },
+  });
+}
 
 async function callOcrService({
   ocrUrl,
@@ -258,6 +354,8 @@ async function callOcrService({
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), OCR_TIMEOUT_MS);
 
+  const inicio = Date.now();
+
   try {
     const response = await fetch(`${ocrUrl.replace(/\/$/, "")}/extract`, {
       method: "POST",
@@ -269,8 +367,11 @@ async function callOcrService({
       signal: controller.signal,
     });
 
+    console.log(`OCR respondió ${response.status} en ${Date.now() - inicio} ms`);
+
     if (!response.ok) {
-      throw new Error(`El servicio de OCR ha devuelto ${response.status}`);
+      const detalle = await response.text().catch(() => "");
+      throw new Error(`El servicio de OCR ha devuelto ${response.status}: ${detalle.slice(0, 200)}`);
     }
 
     return await response.json();
@@ -293,7 +394,7 @@ async function downloadImage(
   return new Uint8Array(await data.arrayBuffer());
 }
 
-async function markFailed(
+async function marcarFallo(
   supabase: ReturnType<typeof createClient>,
   sessionId: string,
   message: string,

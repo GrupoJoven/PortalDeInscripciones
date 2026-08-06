@@ -17,12 +17,19 @@ import type {
   DniUploadResponse,
 } from '../types';
 
+/**
+ * El servicio de OCR puede tardar bastante en responder si su contenedor
+ * estaba dormido. Sin esto el navegador cortaría la petición por su cuenta.
+ */
+const ESPERA_MAXIMA_MS = 120_000;
+
 type Step =
   | 'loading'
   | 'intro'
   | 'front'
   | 'back'
   | 'processing'
+  | 'retry'
   | 'review'
   | 'confirmed'
   | 'error';
@@ -30,16 +37,24 @@ type Step =
 const functionsUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 
 const postFunction = async <T,>(name: string, body: unknown): Promise<T> => {
-  const response = await fetch(`${functionsUrl}/${name}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-    },
-    body: JSON.stringify(body),
-  });
+  const controlador = new AbortController();
+  const temporizador = window.setTimeout(() => controlador.abort(), ESPERA_MAXIMA_MS);
 
-  return (await response.json()) as T;
+  try {
+    const response = await fetch(`${functionsUrl}/${name}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify(body),
+      signal: controlador.signal,
+    });
+
+    return (await response.json()) as T;
+  } finally {
+    window.clearTimeout(temporizador);
+  }
 };
 
 /** El token viaja en el fragmento (#t=...) para que nunca llegue al servidor. */
@@ -143,7 +158,11 @@ export default function DniCapturePage() {
           setError(
             result.message ?? 'No se ha podido subir la foto. Inténtalo de nuevo.',
           );
-          setStep(side === 'front' ? 'front' : 'back');
+
+          // Si el fallo es del servicio de lectura, las fotos siguen siendo
+          // válidas: repetirlas no arregla nada y antes esto dejaba al
+          // usuario repitiendo el reverso en bucle.
+          setStep(result.can_retry ? 'retry' : side === 'front' ? 'front' : 'back');
           return;
         }
 
@@ -173,6 +192,17 @@ export default function DniCapturePage() {
         setStep('back');
       } catch (err) {
         console.error(err);
+
+        const abortada = err instanceof DOMException && err.name === 'AbortError';
+
+        if (abortada && side === 'back') {
+          setError(
+            'La lectura del documento está tardando demasiado. Las fotos están guardadas: puedes reintentarlo.',
+          );
+          setStep('retry');
+          return;
+        }
+
         setError('No se ha podido subir la foto. Comprueba tu conexión.');
         setStep(side === 'front' ? 'front' : 'back');
       } finally {
@@ -181,6 +211,45 @@ export default function DniCapturePage() {
     },
     [token],
   );
+
+  /** Reintenta la lectura con las fotos ya subidas, sin repetirlas. */
+  const reintentarLectura = async () => {
+    setUploading(true);
+    setError('');
+    setNotice('');
+    setStep('processing');
+
+    try {
+      const result = await postFunction<DniUploadResponse>('dni-verification-upload', {
+        mobile_token: token,
+        retry: true,
+      });
+
+      if (result.ok && result.status === 'extracted' && result.extracted) {
+        setExtracted(result.extracted);
+        setStep('review');
+        return;
+      }
+
+      if (result.status === 'failed') {
+        setError(
+          result.message ??
+            'No hemos podido leer los datos del documento. Repite las fotos con mejor luz.',
+        );
+        setStep('back');
+        return;
+      }
+
+      setError(result.message ?? 'El servicio de lectura sigue sin responder.');
+      setStep('retry');
+    } catch (err) {
+      console.error(err);
+      setError('El servicio de lectura sigue sin responder.');
+      setStep('retry');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   // --- Confirmación -------------------------------------------------------
   const confirmar = async () => {
@@ -341,13 +410,66 @@ export default function DniCapturePage() {
           />
         )}
 
-        {(step === 'processing' || uploading) && step !== 'review' && (
-          <div className="mt-6 flex items-center justify-center gap-3 text-slate-600">
-            <Loader2 className="w-5 h-5 animate-spin" />
-            <span className="text-sm font-medium">
-              {step === 'processing' ? 'Leyendo el documento...' : 'Subiendo la foto...'}
-            </span>
+        {(step === 'processing' || uploading) && step !== 'review' && step !== 'retry' && (
+          <div className="mt-6 text-center">
+            <div className="flex items-center justify-center gap-3 text-slate-600">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="text-sm font-medium">
+                {step === 'processing' ? 'Leyendo el documento...' : 'Subiendo la foto...'}
+              </span>
+            </div>
+
+            {step === 'processing' && (
+              <p className="mt-2 text-xs text-slate-400">
+                Puede tardar hasta un minuto la primera vez.
+              </p>
+            )}
           </div>
+        )}
+
+        {step === 'retry' && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-white border border-slate-200 rounded-3xl p-6"
+          >
+            <AlertCircle className="w-10 h-10 text-amber-500 mb-4" />
+
+            <h2 className="text-xl font-bold text-slate-900 mb-2">
+              No hemos podido leer el documento ahora mismo
+            </h2>
+
+            <p className="text-slate-600 text-sm mb-1">
+              El problema está en nuestro servicio de lectura, no en tus fotos.
+            </p>
+            <p className="text-slate-600 text-sm mb-6">
+              <strong>Tus dos fotos están guardadas</strong>, así que no hace falta
+              repetirlas: basta con volver a intentar la lectura.
+            </p>
+
+            <button
+              type="button"
+              onClick={reintentarLectura}
+              disabled={uploading}
+              className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 disabled:opacity-60"
+            >
+              {uploading ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <RotateCcw className="w-5 h-5" />
+              )}
+              Reintentar la lectura
+            </button>
+
+            <button
+              type="button"
+              onClick={() => repetir('front')}
+              disabled={uploading}
+              className="w-full mt-3 py-3 rounded-2xl font-semibold text-sm bg-white border border-slate-200 text-slate-600 disabled:opacity-60"
+            >
+              Prefiero repetir las fotos
+            </button>
+          </motion.div>
         )}
 
         {step === 'review' && extracted && (
