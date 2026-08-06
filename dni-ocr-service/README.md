@@ -202,6 +202,30 @@ Por debajo de 40 se avisa al usuario de qué foto repetir. En los logs, muchas
 líneas con muy pocos caracteres por línea es la firma de una foto movida:
 Tesseract ve manchas de texto pero no resuelve las letras.
 
+### El nombre sale del anverso aunque no se lea ninguna etiqueta
+
+En todos los DNI reales probados, el anverso daba `etiquetas=ninguna`. Sus
+etiquetas (APELLIDOS, NOMBRE) van impresas en un azul muy tenue y bajo el
+holograma; el reverso, más limpio, sí reconoce las suyas. Sin etiquetas no hay
+forma de saber qué línea del anverso es el nombre y cuál los apellidos.
+
+La salida es **cotejar con el MRZ**: el MRZ del reverso distingue apellidos de
+nombre, aunque los trunque a 30 caracteres. Se comparan sus palabras con las
+líneas del anverso (por prefijo, tolerando el truncado) y las que casan se
+identifican. **El texto que se devuelve es el del anverso, completo.** El MRZ
+solo dice qué es cada cosa.
+
+Las líneas que no casan con nada —`ESPAÑA`, `DOCUMENTO NACIONAL DE IDENTIDAD`,
+fechas— se descartan solas, así que se le pueden pasar todas sin filtrar.
+
+En los logs se indica de dónde ha salido:
+
+```
+Nombre obtenido del anverso (etiquetas)            <- lo ideal
+Nombre obtenido del anverso (cotejado con el MRZ)  <- lo habitual
+Nombre obtenido del MRZ del reverso (puede venir truncado)  <- último recurso
+```
+
 ### Por qué el nombre NO sale del MRZ
 
 El **MRZ** son las tres líneas de 30 caracteres del borde inferior del reverso
@@ -314,6 +338,7 @@ python3 test_encuadres.py  # imagen recortada, con fondo, de lejos, inclinada
 python3 test_zonas.py      # domicilio con el MRZ compitiendo por la atención
 python3 test_plausibilidad.py  # descarta lecturas ilegibles
 python3 test_etiquetas_rotas.py  # tolerancia a "SEXOQ" y demás deformaciones
+python3 test_nombre_sin_etiquetas.py  # nombre del anverso sin etiquetas legibles
 ```
 
 ## Cambios respecto al código original

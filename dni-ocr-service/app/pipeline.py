@@ -795,15 +795,21 @@ def _coinciden(uno: str, otro: str) -> bool:
 
 
 def componer_nombre_con_mrz(lineas: list[str], mrz: dict) -> str | None:
-    """Ordena unas líneas sueltas del anverso usando el MRZ como plantilla.
+    """Localiza el nombre en el anverso usando el MRZ como plantilla.
 
-    Cuando Tesseract no lee la etiqueta NOMBRE (son diminutas, y en los DNI
-    recientes van en dos idiomas) quedan las líneas de valores sin saber
-    cuáles son apellidos y cuál el nombre.
+    Las etiquetas del anverso (APELLIDOS, NOMBRE) van impresas en un azul muy
+    tenue y bajo el holograma, así que Tesseract a menudo no las lee ninguna:
+    en los DNI reales probados, el anverso daba sistemáticamente
+    `etiquetas=ninguna`. Sin etiquetas no hay forma de saber qué línea es qué.
 
-    El MRZ del reverso sí distingue ambas cosas, aunque las trunque a 30
-    caracteres. Sirve entonces de plantilla: dice qué es cada línea, y el
-    texto completo se toma del anverso.
+    Pero el MRZ del reverso sí distingue apellidos de nombre. Aunque los
+    trunque a 30 caracteres, sirve de plantilla: se comparan sus palabras con
+    las líneas del anverso y las que casan se identifican como apellidos o
+    como nombre. El texto que se devuelve es **el del anverso**, completo y
+    sin truncar; el MRZ solo dice qué es cada cosa.
+
+    Las líneas que no casen con nada se descartan, así que se le pueden pasar
+    todas las del anverso sin miedo a que se cuelen fechas o "ESPAÑA".
     """
     apellidos_mrz = _tokens(mrz.get("apellidos") or "")
     nombre_mrz = _tokens(mrz.get("nombre") or "")
@@ -838,6 +844,42 @@ def componer_nombre_con_mrz(lineas: list[str], mrz: dict) -> str | None:
     logger.info("Nombre recompuesto con la plantilla del MRZ")
 
     return _limpiar_nombre(compuesto)
+
+
+def _lineas_candidatas_a_nombre(lineas: list[LineaOCR]) -> list[str]:
+    """Líneas del anverso que podrían ser nombre o apellidos.
+
+    Filtro deliberadamente laxo: solo descarta lo que con seguridad no es un
+    nombre (cifras, etiquetas conocidas, fragmentos de una o dos letras). De
+    separar el grano de la paja se encarga después el cotejo con el MRZ.
+    """
+    candidatas: list[str] = []
+
+    for linea in lineas:
+        texto = _limpiar_nombre(linea.texto)
+
+        if len(texto) < 3:
+            continue
+
+        # Con cifras no es un nombre: es una fecha o un número de documento.
+        if any(c.isdigit() for c in linea.texto):
+            continue
+
+        if SOLO_ETIQUETA.match(texto) or ETIQUETA_TRAS_NOMBRE.search(texto):
+            continue
+
+        if ETIQUETA_APELLIDOS.search(texto) or ETIQUETA_NOMBRE.search(texto):
+            continue
+
+        # Palabras sueltas de dos letras o menos: ruido.
+        palabras = [p for p in texto.split() if len(p) >= 3]
+
+        if not palabras:
+            continue
+
+        candidatas.append(texto)
+
+    return candidatas
 
 
 def extraer_bloque_nombre(lineas: list[LineaOCR]) -> tuple[str | None, list[str]]:
@@ -1655,6 +1697,20 @@ def extraer_de_cara(
         if not nombre:
             nombre = extraer_nombre_completo(texto)
 
+        # Último recurso: si no se ha reconocido ninguna etiqueta, se dejan
+        # TODAS las líneas del anverso como candidatas. El MRZ del reverso
+        # dirá luego cuáles son el nombre y cuáles los apellidos; las demás
+        # (fechas, "ESPAÑA", "DNI"...) no casarán con nada y se descartan.
+        if not nombre and not candidatas:
+            candidatas = _lineas_candidatas_a_nombre(lineas)
+
+            if candidatas:
+                logger.info(
+                    "Sin etiquetas en el anverso: %d líneas quedan a la espera "
+                    "de que el MRZ diga cuál es cuál",
+                    len(candidatas),
+                )
+
         return ResultadoCara(
             es_anverso=True,
             numero=extraer_dni_anverso(texto),
@@ -1792,10 +1848,11 @@ def extraer_datos(
     # El nombre se lee del anverso, que es donde aparece completo. El del MRZ
     # (reverso) solo llega aquí si se pudo garantizar que no venía truncado.
     nombre = next((c.nombre for c in delanteras if c.nombre), None)
+    origen_nombre = "anverso (etiquetas)" if nombre else None
 
-    # Si faltó la etiqueta NOMBRE en el anverso, se ordenan sus líneas con el
-    # MRZ del reverso como plantilla: el MRZ dice qué es apellido y qué es
-    # nombre, y el texto completo se toma del anverso.
+    # Si en el anverso no se leyeron las etiquetas, se cotejan sus líneas con
+    # el MRZ del reverso: el MRZ dice qué es apellido y qué es nombre, y el
+    # texto completo —sin truncar— se toma del anverso.
     if not nombre:
         candidatas = next((c.lineas_nombre for c in delanteras if c.lineas_nombre), [])
         mrz = next((c.mrz for c in traseras if c.mrz), None)
@@ -1803,8 +1860,19 @@ def extraer_datos(
         if candidatas and mrz:
             nombre = componer_nombre_con_mrz(candidatas, mrz)
 
+            if nombre:
+                origen_nombre = "anverso (cotejado con el MRZ)"
+
+    # Solo si el anverso no ha dado nada se recurre al nombre del propio MRZ,
+    # que puede venir cortado a 30 caracteres.
     if not nombre:
         nombre = next((c.nombre for c in traseras if c.nombre), None)
+
+        if nombre:
+            origen_nombre = "MRZ del reverso (puede venir truncado)"
+
+    if nombre:
+        logger.info("Nombre obtenido del %s", origen_nombre)
 
     domicilio = next((c.domicilio for c in traseras if c.domicilio), None)
 
