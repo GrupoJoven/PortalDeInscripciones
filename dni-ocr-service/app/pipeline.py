@@ -1026,31 +1026,154 @@ def detectar_y_recortar_documento(
     return corregir_perspectiva(imagen_original, puntos_originales)
 
 
-def _preparar_para_ocr(imagen: np.ndarray) -> np.ndarray:
-    """Detecta el documento; si no lo consigue, usa la imagen tal cual.
+def _borde_uniforme(imagen: np.ndarray, umbral: float = 14.0) -> bool:
+    """¿El borde de la imagen es un fondo liso (una mesa, por ejemplo)?
 
-    El navegador ya recorta al marco guía, así que la imagen completa suele
-    ser un recorte aceptable.
+    Una superficie de apoyo es muy uniforme; el borde de la propia tarjeta,
+    con su texto y sus tramas, lo es mucho menos.
     """
+    alto, ancho = imagen.shape[:2]
+    grosor = max(3, int(min(alto, ancho) * 0.03))
+
+    gris = cv2.cvtColor(imagen, cv2.COLOR_BGR2GRAY)
+
+    banda = np.concatenate(
+        [
+            gris[:grosor, :].ravel(),
+            gris[-grosor:, :].ravel(),
+            gris[:, :grosor].ravel(),
+            gris[:, -grosor:].ravel(),
+        ]
+    )
+
+    return float(banda.std()) < umbral
+
+
+def _ya_viene_recortada(imagen: np.ndarray, tolerancia: float = 0.05) -> bool:
+    """¿La imagen es ya prácticamente solo la tarjeta?
+
+    La página de captura recorta exactamente al marco guía, que tiene la
+    proporción del DNI, así que lo que llega del móvil ya viene recortado.
+
+    No basta con la proporción: una foto con fondo puede dar por casualidad
+    una proporción parecida. Se exige además que el borde no sea un fondo liso.
+    """
+    alto, ancho = imagen.shape[:2]
+
+    if alto == 0 or ancho == 0:
+        return False
+
+    proporcion = max(alto, ancho) / min(alto, ancho)
+
+    if abs(proporcion - PROPORCION_DNI) > tolerancia:
+        return False
+
+    return not _borde_uniforme(imagen)
+
+
+def _recorte_creible(recorte: np.ndarray, imagen: np.ndarray) -> bool:
+    """Comprueba que lo detectado se parece de verdad a un DNI.
+
+    Sin esta validación, sobre una imagen ya recortada el detector tomaba por
+    contorno un bloque de texto o la fotografía y devolvía un recorte
+    deformado con el que Tesseract dejaba de leer.
+    """
+    alto, ancho = recorte.shape[:2]
+
+    if alto < 10 or ancho < 10:
+        return False
+
+    proporcion = max(alto, ancho) / min(alto, ancho)
+
+    if abs(proporcion - PROPORCION_DNI) > 0.28:
+        logger.info("Recorte descartado: proporción %.2f lejos de %.2f", proporcion, PROPORCION_DNI)
+        return False
+
+    # Solo se pone tope por arriba: si el recorte "crece" respecto al original
+    # es que la corrección de perspectiva ha deformado la imagen, que es
+    # justo el fallo que dejaba a Tesseract sin poder leer.
+    #
+    # No se pone mínimo: una foto hecha de lejos da un recorte pequeño y
+    # perfectamente válido. Quien descarta los falsos positivos es la
+    # comprobación de la proporción, porque un fragmento de tarjeta (un bloque
+    # de texto, la fotografía) no tiene la forma de un DNI.
+    area_original = imagen.shape[0] * imagen.shape[1]
+    proporcion_area = (alto * ancho) / area_original if area_original else 0
+
+    if proporcion_area > 1.10:
+        logger.info(
+            "Recorte descartado: la corrección de perspectiva lo ha agrandado al %.0f%%",
+            100 * proporcion_area,
+        )
+        return False
+
+    return True
+
+
+def _preparar_para_ocr(imagen: np.ndarray) -> np.ndarray:
+    """Deja la imagen lista para el OCR: solo la tarjeta y a un tamaño útil.
+
+    La detección de contorno solo se usa cuando hace falta. Si la imagen ya
+    tiene la proporción del DNI, buscar la tarjeta dentro de la tarjeta es
+    contraproducente: al no haber fondo del que separarla, el algoritmo toma
+    por contorno cualquier bloque de texto o la fotografía, y devuelve un
+    recorte deformado con el que Tesseract ya no lee nada.
+    """
+    alto_original, ancho_original = imagen.shape[:2]
+
+    if _ya_viene_recortada(imagen):
+        logger.info(
+            "Imagen ya recortada (%dx%d): se omite la detección de contorno",
+            ancho_original,
+            alto_original,
+        )
+        recorte = imagen
+
+        if recorte.shape[0] > recorte.shape[1]:
+            recorte = cv2.rotate(recorte, cv2.ROTATE_90_CLOCKWISE)
+
+        return _escalar_para_ocr(recorte)
+
     try:
         recorte = detectar_y_recortar_documento(imagen)
+
+        if not _recorte_creible(recorte, imagen):
+            raise ValueError("recorte_no_creible")
+
+        logger.info(
+            "Documento detectado: %dx%d -> %dx%d",
+            ancho_original,
+            alto_original,
+            recorte.shape[1],
+            recorte.shape[0],
+        )
     except (ValueError, cv2.error):
+        logger.info(
+            "Sin detección fiable (%dx%d): se usa la imagen completa",
+            ancho_original,
+            alto_original,
+        )
         recorte = imagen
         if recorte.shape[0] > recorte.shape[1]:
             recorte = cv2.rotate(recorte, cv2.ROTATE_90_CLOCKWISE)
 
-    # Normalizar el ancho: ni tan pequeño que Tesseract no lea, ni tan grande
-    # que tarde de más para nada.
+    return _escalar_para_ocr(recorte)
+
+
+def _escalar_para_ocr(recorte: np.ndarray) -> np.ndarray:
+    """Normaliza el ancho: ni tan pequeño que Tesseract no lea, ni tan grande
+    que tarde de más para nada."""
     ancho = recorte.shape[1]
 
     if ancho > ANCHO_OCR * 1.15:
         factor = ANCHO_OCR / ancho
-        recorte = cv2.resize(
+        return cv2.resize(
             recorte, None, fx=factor, fy=factor, interpolation=cv2.INTER_AREA
         )
-    elif ancho < ANCHO_OCR * 0.75:
+
+    if ancho < ANCHO_OCR * 0.75:
         factor = ANCHO_OCR / ancho
-        recorte = cv2.resize(
+        return cv2.resize(
             recorte, None, fx=factor, fy=factor, interpolation=cv2.INTER_CUBIC
         )
 
@@ -1110,6 +1233,21 @@ def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
         )
         if _puntuar_texto_ocr(texto_binario) > _puntuar_texto_ocr(texto):
             texto, lineas = texto_binario, lineas_binario
+
+    etiquetas = [
+        e
+        for e in ("APELLIDOS", "NOMBRE", "SEXO", "NACIONALIDAD", "DOMICILIO", "IDESP")
+        if e in texto.upper()
+    ]
+
+    logger.info(
+        "Cara leída: %dx%d, %d líneas, %d caracteres, etiquetas=%s",
+        recorte.shape[1],
+        recorte.shape[0],
+        len(lineas),
+        len(texto),
+        etiquetas or "ninguna",
+    )
 
     return CaraLeida(recorte=recorte, texto=texto, lineas=lineas)
 

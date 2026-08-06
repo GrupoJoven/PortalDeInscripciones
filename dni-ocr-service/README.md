@@ -181,13 +181,36 @@ INFO:app.pipeline:MRZ leído (directa): numero=12345678Z valido=True nombre=True
 INFO:app.pipeline:Extracción terminada en 18.9 s: numero=True nombre=True domicilio=True
 ```
 
+### La detección de contorno solo se usa cuando hace falta
+
+El pipeline original se diseñó para fotos de un DNI sobre una mesa: detectaba
+la tarjeta separándola del fondo y corregía la perspectiva. Pero la página de
+captura recorta exactamente al marco guía, así que **lo que llega del móvil ya
+viene sin fondo alrededor**.
+
+Sobre una imagen así, el detector no falla limpiamente: toma por contorno un
+bloque de texto o la fotografía del titular y devuelve un recorte deformado
+(se llegó a medir un 130 % del área original) con el que Tesseract deja de
+leer. El síntoma en los logs era `puntuaciones=[0, -1]`, es decir, ninguna
+etiqueta reconocida en el anverso, y ni nombre ni domicilio en el resultado.
+
+Ahora hay dos salvaguardas:
+
+1. **Se omite la detección** si la imagen ya tiene la proporción del DNI y su
+   borde no es un fondo liso.
+2. **Se valida lo detectado**: si el recorte no tiene forma de DNI, o si la
+   corrección de perspectiva lo ha agrandado, se descarta y se usa la imagen
+   completa. No se exige un tamaño mínimo, porque una foto hecha de lejos da
+   un recorte pequeño y perfectamente válido.
+
 ### Pruebas
 
 ```bash
 cd dni-ocr-service
-python3 test_pipeline.py  # extracción de campos y consolidación
-python3 test_mrz.py       # lectura y dígitos de control del MRZ
-python3 test_nombre.py    # nombre por posición, incluido un nombre muy largo
+python3 test_pipeline.py   # extracción de campos y consolidación
+python3 test_mrz.py        # lectura y dígitos de control del MRZ
+python3 test_nombre.py     # nombre por posición, incluido un nombre muy largo
+python3 test_encuadres.py  # imagen recortada, con fondo, de lejos, inclinada
 ```
 
 ## Cambios respecto al código original
