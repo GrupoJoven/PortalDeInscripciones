@@ -585,10 +585,14 @@ ETIQUETA_TRAS_NOMBRE = re.compile(
 # Se contemplan las deformaciones típicas del OCR: la I de HIJO leída como 1
 # o como l, NACIMIENTO con 1, etc. Si una de estas no se reconoce, el bloque
 # de filiación (HIJO/A DE ...) se cuela dentro del domicilio.
+# Ojo con ser demasiado goloso aquí: "PADRE" y "MADRE" aparecen en nombres de
+# calle españoles ("CALLE PADRE MANJON"), así que solo se cortan cuando van
+# como encabezado de la filiación, es decir seguidos de "DE" o al empezar la
+# línea junto a HIJO.
 ETIQUETAS_SIGUIENTES = re.compile(
     r"\b("
-    r"LUGAR|NAC[I1L]M|EQU[I1L]PO|H[I1L]J[O0]|PADRES?|MADRE|"
-    r"[I1L]DESP|PROV[I1L]NC[I1L]A\s*/|VAL[I1L]DEZ|DN[I1L]\b|SOPORTE"
+    r"LUGAR\s+DE|DE\s+NAC[I1L]M|NAC[I1L]M[I1L]ENT|EQU[I1L]PO|"
+    r"H[I1L]J[O0]\s*/?\s*A?\s*DE|[I1L]DESP|PROV[I1L]NC[I1L]A\s*/"
     r")",
     re.IGNORECASE,
 )
@@ -669,14 +673,23 @@ def _lineas_debajo(
             continue
 
         if ETIQUETAS_SIGUIENTES.search(linea.texto):
+            logger.debug("Corte por etiqueta siguiente: %r", linea.texto[:40])
             break
 
-        referencia = anterior or etiqueta
-        hueco = linea.y0 - referencia.y1
-        altura = max(12, referencia.y1 - referencia.y0)
+        # El hueco solo se mide ENTRE líneas de valor. El que hay entre la
+        # etiqueta y su primer valor es de otra naturaleza (la etiqueta es
+        # mucho más pequeña) y medirlo ahí cortaba el bloque antes de empezar.
+        if anterior is not None:
+            hueco = linea.y0 - anterior.y1
+            altura = max(14, anterior.y1 - anterior.y0)
 
-        if hueco > altura * 1.6:
-            break
+            if hueco > altura * 2.2:
+                logger.debug(
+                    "Corte por hueco vertical (%d px sobre una altura de %d)",
+                    hueco,
+                    altura,
+                )
+                break
 
         resultado.append(linea)
         anterior = linea
@@ -1066,19 +1079,79 @@ def extraer_nombre_de_zona(
     return extraer_bloque_nombre(lineas)
 
 
+def _bloque_superior_izquierdo(lineas: list[LineaOCR]) -> list[str]:
+    """Primeras líneas de contenido de la esquina superior izquierda.
+
+    Respaldo para cuando no se reconoce la etiqueta DOMICILIO, que en las
+    fotos reales pasa a menudo: es diminuta y va en tinta clara. En el reverso
+    del DNI el domicilio es siempre el primer bloque de arriba a la izquierda,
+    así que se puede localizar por su sitio.
+
+    Lo que salga de aquí pasa después por `texto_plausible`, que descarta el
+    ruido, y por la validación de campos obligatorios.
+    """
+    if not lineas:
+        return []
+
+    ancho = max(l.x1 for l in lineas)
+    alto = max(l.y1 for l in lineas)
+
+    utiles = [
+        l
+        for l in lineas
+        # Mitad superior y dos tercios izquierdos: donde va el domicilio.
+        if l.y1 < alto * 0.55
+        and l.x0 < ancho * 0.62
+        and len(l.texto.strip()) >= 4
+        and not ETIQUETAS_SIGUIENTES.search(l.texto)
+        and not SOLO_ETIQUETA.match(l.texto.strip())
+        and not re.search(r"\bDOMICILIO|ADDRESS", l.texto, re.IGNORECASE)
+    ]
+
+    if not utiles:
+        return []
+
+    utiles.sort(key=lambda l: (l.y0, l.x0))
+
+    return [normalizar_espacios(l.texto) for l in utiles[:3]]
+
+
 def extraer_domicilio_por_posicion(lineas: list[LineaOCR]) -> dict | None:
-    """Busca la etiqueta DOMICILIO y toma las líneas que hay debajo."""
+    """Busca la etiqueta DOMICILIO y toma las líneas que hay debajo.
+
+    Si la etiqueta no se reconoce, se recurre al bloque superior izquierdo.
+    """
     etiqueta = next(
-        (l for l in lineas if re.search(r"\bDOMICILIO\b", l.texto, re.IGNORECASE)),
+        (l for l in lineas if re.search(r"\bDOMICILIO|ADDRESS", l.texto, re.IGNORECASE)),
         None,
     )
 
     if etiqueta is None:
-        return None
+        textos = _bloque_superior_izquierdo(lineas)
+
+        if not textos:
+            logger.info("Ni etiqueta DOMICILIO ni bloque superior izquierdo utilizable")
+            return None
+
+        logger.info(
+            "Sin etiqueta DOMICILIO: se usa el bloque superior izquierdo (%d líneas)",
+            len(textos),
+        )
+
+        return _componer_domicilio(textos)
 
     debajo = _lineas_debajo(lineas, etiqueta, maximo=4)
     textos = [l.texto for l in debajo if l.texto.strip()]
 
+    if not textos:
+        logger.info("Etiqueta DOMICILIO encontrada pero sin líneas de valor debajo")
+        return None
+
+    return _componer_domicilio(textos)
+
+
+def _componer_domicilio(textos: list[str]) -> dict | None:
+    """Reparte las líneas del bloque en dirección, localidad y provincia."""
     if not textos:
         return None
 

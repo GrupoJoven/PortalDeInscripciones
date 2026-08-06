@@ -202,6 +202,30 @@ Por debajo de 40 se avisa al usuario de qué foto repetir. En los logs, muchas
 líneas con muy pocos caracteres por línea es la firma de una foto movida:
 Tesseract ve manchas de texto pero no resuelve las letras.
 
+### Nada depende de que se lea una etiqueta
+
+Las etiquetas del documento (APELLIDOS, NOMBRE, DOMICILIO) son diminutas y van
+en tinta clara. Con el mismo documento y una nitidez parecida, unas veces se
+reconocen y otras no:
+
+```
+un reverso : etiquetas=['DOMICILIO']  -> domicilio correcto
+otro       : etiquetas=['IDESP']      -> sin domicilio
+```
+
+Depender de ellas convertía el resultado en una lotería. Cada campo tiene
+ahora una vía que no las necesita:
+
+| Campo | Sin etiqueta |
+| --- | --- |
+| Nombre | Se cotejan las líneas del anverso con el MRZ del reverso |
+| Domicilio | Primer bloque de arriba a la izquierda del reverso |
+| Número | El MRZ, que además trae dígito de control |
+
+Lo que salga de esas vías pasa igualmente por `texto_plausible` y por la
+validación de campos obligatorios, así que un respaldo que se equivoque
+bloquea en vez de colar un dato inventado.
+
 ### El nombre sale del anverso aunque no se lea ninguna etiqueta
 
 En todos los DNI reales probados, el anverso daba `etiquetas=ninguna`. Sus
@@ -339,6 +363,7 @@ python3 test_zonas.py      # domicilio con el MRZ compitiendo por la atención
 python3 test_plausibilidad.py  # descarta lecturas ilegibles
 python3 test_etiquetas_rotas.py  # tolerancia a "SEXOQ" y demás deformaciones
 python3 test_nombre_sin_etiquetas.py  # nombre del anverso sin etiquetas legibles
+python3 test_domicilio_sin_etiqueta.py  # domicilio sin la etiqueta DOMICILIO
 ```
 
 ## Cambios respecto al código original
