@@ -153,6 +153,46 @@ def normalizar_espacios(texto: str) -> str:
     return re.sub(r"\s+", " ", texto).strip()
 
 
+def texto_plausible(
+    texto: str | None,
+    minimo_palabras: int = 2,
+    minimo_mayusculas: float = 0.85,
+) -> bool:
+    """¿Esto parece un dato de verdad o el ruido de un OCR que no ha podido?
+
+    El DNI imprime el nombre y el domicilio **enteramente en mayúsculas**, así
+    que las minúsculas delatan letras mal leídas. Medido sobre un caso real:
+
+        "omo: EE Pd a a 2, o 59 ALICANTE, A DE quo PS A A"   64 % mayúsculas
+        "AV DE LA CONSTITUCION 45 2 IZQ, ALICANTE"          100 % mayúsculas
+
+    Sin esta comprobación, una lectura ilegible se daba por buena y el usuario
+    continuaba con datos inventados, que es peor que no leer nada.
+    """
+    if not texto or not texto.strip():
+        return False
+
+    letras = [c for c in texto if c.isalpha()]
+
+    if not letras:
+        return False
+
+    proporcion_mayusculas = sum(1 for c in letras if c.isupper()) / len(letras)
+
+    if proporcion_mayusculas < minimo_mayusculas:
+        return False
+
+    # Y tiene que haber palabras de verdad, no solo fragmentos sueltos.
+    # No se exige que cada palabra sea íntegramente mayúscula: de la calidad
+    # global ya se encarga la proporción de arriba, y una sola letra mal leída
+    # ("MADRlD") no debería invalidar un domicilio por lo demás correcto.
+    palabras = [
+        t for t in re.split(r"[\s,.:;/\\|-]+", texto) if len(t) >= 3 and t.isalpha()
+    ]
+
+    return len(palabras) >= minimo_palabras
+
+
 # ---------------------------------------------------------------------------
 # OCR
 # ---------------------------------------------------------------------------
@@ -1420,6 +1460,8 @@ class ResultadoCara:
     lineas_nombre: list[str] = field(default_factory=list)
     # Datos del MRZ del reverso, para poder ordenar esas líneas.
     mrz: dict | None = None
+    # Varianza del laplaciano: por debajo de ~40 el texto pequeño es ilegible.
+    nitidez: float | None = None
 
 
 @dataclass
@@ -1427,6 +1469,7 @@ class CaraLeida:
     recorte: np.ndarray
     texto: str
     lineas: list[LineaOCR]
+    nitidez: float = 0.0
 
 
 INDICIOS_ANVERSO = ("APELLIDOS", "SURNAME", "NOMBRE", "SEXO", "NACIONALIDAD", "VALIDEZ")
@@ -1506,7 +1549,7 @@ def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
             nitidez,
         )
 
-    return CaraLeida(recorte=recorte, texto=texto, lineas=lineas)
+    return CaraLeida(recorte=recorte, texto=texto, lineas=lineas, nitidez=nitidez)
 
 
 def extraer_de_cara(
@@ -1536,6 +1579,7 @@ def extraer_de_cara(
             nombre=nombre,
             texto=texto,
             lineas_nombre=candidatas,
+            nitidez=cara.nitidez,
         )
 
     # Reverso: el domicilio se busca primero por posición (etiqueta DOMICILIO
@@ -1575,6 +1619,7 @@ def extraer_de_cara(
         domicilio=domicilio,
         texto=texto,
         mrz=mrz,
+        nitidez=cara.nitidez,
     )
 
 
@@ -1696,16 +1741,39 @@ def extraer_datos(
     if numero is None:
         avisos.append("No se ha podido leer el número de DNI.")
 
-    # Si no se ha reconocido ninguna etiqueta en ninguna cara, el problema es
-    # la foto, no el reconocimiento: merece un aviso que se entienda.
-    if max(puntuaciones) <= 0 and not (nombre or domicilio):
+    # La nitidez explica casi siempre por qué falla la lectura. Medido sobre
+    # fotos reales: por debajo de ~40 el texto pequeño del documento sale
+    # ilegible, aunque las líneas se detecten.
+    borrosas = [
+        etiqueta
+        for etiqueta, cara in (("anverso", cara_anverso), ("reverso", cara_reverso))
+        if cara.nitidez is not None and cara.nitidez < 40
+    ]
+
+    if borrosas and not (nombre and domicilio):
+        cuales = " y ".join(borrosas)
         avisos.append(
-            "Las fotos han salido movidas o desenfocadas. "
-            "Apoya el documento en una superficie firme y espera a que la "
-            "imagen se vea nítida antes de disparar."
+            f"La foto del {cuales} ha salido poco nítida. "
+            "Apoya el documento en una superficie firme, acerca el móvil hasta "
+            "llenar el marco y espera a que enfoque antes de disparar."
         )
 
     domicilio_texto = formatear_domicilio(domicilio)
+
+    # Última criba: un texto que no se sostiene se descarta. Vale más pedir
+    # que repitan la foto que dejarles seguir con un domicilio inventado.
+    if domicilio_texto and not texto_plausible(domicilio_texto):
+        logger.warning(
+            "Domicilio descartado por ilegible: %r", domicilio_texto[:60]
+        )
+        avisos.append("El domicilio se ha leído mal; repite la foto del reverso.")
+        domicilio = None
+        domicilio_texto = None
+
+    if nombre and not texto_plausible(nombre):
+        logger.warning("Nombre descartado por ilegible: %r", nombre[:60])
+        avisos.append("El nombre se ha leído mal; repite la foto del anverso.")
+        nombre = None
 
     logger.info(
         "Extracción terminada en %.1f s: numero=%s nombre=%s domicilio=%s",

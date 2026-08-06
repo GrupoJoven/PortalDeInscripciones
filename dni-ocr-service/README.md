@@ -55,7 +55,8 @@ más fiable de que el OCR ha leído bien el número.
 | `PORT`                    | No          | Puerto de escucha (por defecto `8080`).                |
 | `DNI_OCR_WORKERS`         | No          | Hilos para OCR simultáneo (por defecto `2`).           |
 | `DNI_OCR_MAX_BYTES`       | No          | Tamaño máximo por imagen (por defecto 8 MB).           |
-| `DNI_OCR_PRESUPUESTO_SEGUNDOS` | No     | Tiempo máximo por documento (por defecto 70 s).        |
+| `DNI_OCR_PRESUPUESTO_SEGUNDOS` | No     | Tiempo máximo por documento (por defecto 100 s).       |
+| `OMP_THREAD_LIMIT`        | No          | Hilos de Tesseract (1 en el Dockerfile; ver Rendimiento). |
 
 Genera el secreto con:
 
@@ -156,6 +157,45 @@ aislando su zona:
 
 Cada zona se prueba en color y binarizada. Solo se paga esa pasada extra
 cuando el campo no ha salido de la lectura normal.
+
+### Nada ilegible pasa el filtro
+
+Con una foto poco nítida puede ocurrir lo peor: que se localice la etiqueta
+DOMICILIO y se tomen como valor las líneas de debajo, que son ruido. Un caso
+real, con `nitidez=25`:
+
+```
+"omo: EE Pd a a 2, o 59 ALICANTE, A DE quo PS A A"
+```
+
+Eso se daba por bueno y el usuario continuaba con un domicilio inventado, que
+es peor que no leer nada: si no se lee, al menos se bloquea.
+
+El DNI imprime nombre y domicilio **enteramente en mayúsculas**, así que la
+proporción de minúsculas delata las letras mal leídas:
+
+| Texto | Mayúsculas |
+| --- | --- |
+| `omo: EE Pd a a 2, o 59 ALICANTE...` | 64 % |
+| `AV DE LA CONSTITUCION 45 2 IZQ, ALICANTE` | 100 % |
+
+`texto_plausible()` exige un 85 % de mayúsculas y al menos dos palabras de tres
+o más letras. No se exige que cada palabra sea íntegramente mayúscula: una sola
+letra mal leída (`MADRlD`) no debe invalidar un domicilio por lo demás bueno.
+
+### Nitidez: la causa de fondo de casi todos los fallos
+
+Se registra la varianza del laplaciano de cada cara. Medido sobre fotos reales:
+
+| Nitidez | Qué pasa |
+| --- | --- |
+| ~278 | tarjeta perfectamente legible |
+| ~80  | el texto grande se lee, las etiquetas pequeñas no |
+| ~25  | el texto pequeño sale como ruido |
+
+Por debajo de 40 se avisa al usuario de qué foto repetir. En los logs, muchas
+líneas con muy pocos caracteres por línea es la firma de una foto movida:
+Tesseract ve manchas de texto pero no resuelve las letras.
 
 ### Por qué el nombre NO sale del MRZ
 
@@ -267,6 +307,7 @@ python3 test_mrz.py        # lectura y dígitos de control del MRZ
 python3 test_nombre.py     # nombre por posición, incluido un nombre muy largo
 python3 test_encuadres.py  # imagen recortada, con fondo, de lejos, inclinada
 python3 test_zonas.py      # domicilio con el MRZ compitiendo por la atención
+python3 test_plausibilidad.py  # descarta lecturas ilegibles
 ```
 
 ## Cambios respecto al código original
