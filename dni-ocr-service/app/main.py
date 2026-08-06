@@ -18,10 +18,17 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from .pipeline import IDIOMA_OCR, decodificar_imagen, extraer_datos
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("dni-ocr")
+
+# Se registra antes y después de importar el pipeline porque ahí es donde se
+# cargan OpenCV y NumPy y se consulta Tesseract. Si el contenedor muriera
+# durante el arranque, estas dos líneas dicen si llegó a pasar de aquí.
+logger.info("Arrancando el servicio de OCR...")
+
+from .pipeline import IDIOMA_OCR, decodificar_imagen, extraer_datos  # noqa: E402
+
+logger.info("Pipeline cargado. Idioma de OCR: %s", IDIOMA_OCR)
 
 SERVICE_SECRET = os.environ.get("DNI_OCR_SERVICE_SECRET", "")
 MAX_BYTES = int(os.environ.get("DNI_OCR_MAX_BYTES", 8 * 1024 * 1024))
