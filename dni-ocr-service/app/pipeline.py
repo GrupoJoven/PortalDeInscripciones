@@ -1720,6 +1720,83 @@ def _sin_tiempo(deadline: float | None) -> bool:
     return deadline is not None and time.monotonic() >= deadline
 
 
+# Girar la carta 90°/180° respecto a como la lee Tesseract la deja tan
+# fragmentada como una foto realmente movida: decenas de líneas de 3-5
+# caracteres, sin una sola etiqueta reconocida. Comprobado con fotos reales
+# (ver test_correccion_rotacion.py): a la orientación correcta salen 15-50
+# líneas con 6-15+ caracteres de media; girada 90° u 180°, 100-150 líneas de
+# 4-5 caracteres. El aviso de "nitidez baja" que ya existía diagnosticaba
+# bien el síntoma pero apuntaba a la causa equivocada: no es la foto, es el
+# ángulo con el que ha llegado.
+ROTACIONES_ALTERNATIVAS = (
+    cv2.ROTATE_90_CLOCKWISE,
+    cv2.ROTATE_180,
+    cv2.ROTATE_90_COUNTERCLOCKWISE,
+)
+
+# Config barata (una sola pasada, sin las variantes en inglés/otros psm) para
+# probar las cuatro orientaciones sin disparar el coste por cuatro.
+CONFIG_ORIENTACION = config_ocr(6)
+
+
+def _puntuacion_orientacion(texto: str) -> float:
+    """Puntúa un texto por lo bien orientada que parece la imagen leída.
+
+    Se suma a la puntuación habitual (etiquetas del documento) la longitud
+    media de línea: el anverso rara vez deja leer sus etiquetas —van en tinta
+    tenue bajo el holograma— ni siquiera bien orientado, así que hace falta
+    una señal que no dependa solo de encontrarlas. Mal orientada, una tarjeta
+    sale hecha decenas de líneas de 3-5 caracteres; bien orientada, aunque la
+    lectura salga floja, las líneas miden bastante más.
+    """
+    if not texto or not texto.strip():
+        return 0.0
+
+    lineas = [l for l in texto.splitlines() if l.strip()]
+    caracteres_por_linea = len(texto) / len(lineas) if lineas else 0
+
+    return _puntuar_texto_ocr(texto) + min(caracteres_por_linea, 30)
+
+
+def _corregir_rotacion(recorte: np.ndarray, deadline: float | None = None) -> np.ndarray | None:
+    """Prueba las otras tres rotaciones y devuelve la que lea claramente mejor.
+
+    Solo se llama cuando la lectura ya ha salido con la pinta de estar mal
+    orientada. Cada intento es una única pasada de Tesseract (barata) en vez
+    de las 2-3 configuraciones completas: aquí solo hace falta puntuar, no
+    sacar el texto definitivo. Devuelve `None` si ninguna alternativa mejora
+    claramente lo que ya había, para no girar una tarjeta que de verdad
+    estaba bien orientada pero había salido borrosa por otro motivo.
+    """
+    try:
+        texto_actual = pytesseract.image_to_string(recorte, config=CONFIG_ORIENTACION)
+    except pytesseract.TesseractError:
+        texto_actual = ""
+
+    mejor_imagen = None
+    mejor_puntuacion = _puntuacion_orientacion(texto_actual)
+
+    for rotacion in ROTACIONES_ALTERNATIVAS:
+        if _sin_tiempo(deadline):
+            break
+
+        candidata = cv2.rotate(recorte, rotacion)
+
+        try:
+            texto = pytesseract.image_to_string(candidata, config=CONFIG_ORIENTACION)
+        except pytesseract.TesseractError:
+            continue
+
+        puntuacion = _puntuacion_orientacion(texto)
+
+        # Margen para no girar por una diferencia que podría ser solo ruido.
+        if puntuacion > mejor_puntuacion + 5:
+            mejor_puntuacion = puntuacion
+            mejor_imagen = candidata
+
+    return mejor_imagen
+
+
 def _puntuar_cara(texto: str) -> int:
     """Positivo si parece el anverso, negativo si parece el reverso."""
     mayusculas = texto.upper()
@@ -1752,6 +1829,38 @@ def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
         if e in texto.upper()
     ]
 
+    caracteres_por_linea = len(texto) / len(lineas) if lineas else 0
+
+    # Dos firmas distintas de una tarjeta girada 90°/180° (comprobado con
+    # fotos reales y con tarjetas sintéticas):
+    #   - decenas de líneas de 3-5 caracteres: lo típico en una foto real,
+    #     donde girar el texto también fragmenta la segmentación de Tesseract;
+    #   - puntuación ~0 aunque las líneas no sean tan cortas: en un render
+    #     limpio (sin el ruido de una foto) Tesseract puede seguir agrupando
+    #     líneas enteras aunque el texto salga leído "del revés" y por tanto
+    #     irreconocible.
+    # Antes esto solo se registraba como aviso de "posible desenfoque"; ahora
+    # se intenta arreglar antes de rendirse.
+    if (
+        lineas
+        and not etiquetas
+        and (caracteres_por_linea < 6 or _puntuar_texto_ocr(texto) < 1)
+        and not _sin_tiempo(deadline)
+    ):
+        recorte_corregido = _corregir_rotacion(recorte, deadline=deadline)
+
+        if recorte_corregido is not None:
+            logger.info("Reintentando con otra rotación: la lectura tenía pinta de estar girada")
+
+            recorte = recorte_corregido
+            texto, lineas = ocr_con_posiciones(recorte, deadline=deadline)
+            etiquetas = [
+                e
+                for e in ("APELLIDOS", "NOMBRE", "SEXO", "NACIONALIDAD", "DOMICILIO", "IDESP")
+                if e in texto.upper()
+            ]
+            caracteres_por_linea = len(texto) / len(lineas) if lineas else 0
+
     # La nitidez se registra para poder relacionar los fallos con la calidad
     # de la foto. Muchas líneas con muy pocos caracteres delata una foto
     # movida: Tesseract ve manchas de texto pero no resuelve las letras.
@@ -1767,8 +1876,6 @@ def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
             recorte.shape[1],
             ANCHO_OCR,
         )
-
-    caracteres_por_linea = len(texto) / len(lineas) if lineas else 0
 
     logger.info(
         "Cara leída: %dx%d, %d líneas, %d caracteres (%.1f por línea), "
