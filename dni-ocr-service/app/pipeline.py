@@ -616,11 +616,13 @@ ETIQUETAS_SIGUIENTES = re.compile(
     re.IGNORECASE,
 )
 
-# Forma característica de un código de EQUIPO (oficina emisora) leído suelto,
-# sin la palabra "EQUIPO" pegada: dígitos, un bloque letra+dígitos, dígitos
-# ("44 P14 53"). Sin la etiqueta delante no hay forma de reconocerlo por
-# texto, así que se reconoce por su forma para que no se cuele como domicilio.
-CODIGO_EQUIPO = re.compile(r"^\d{1,3}\s*[A-Z]\d{1,4}\s*\d{0,4}$")
+# NOTA: hubo aquí un intento de reconocer el código de EQUIPO por su forma
+# ("dígitos, letra+dígitos, dígitos") para excluirlo del domicilio si se
+# leía suelto. Se ha quitado: esa forma es indistinguible de un número de
+# piso/puerta real ("C. ALFAHUIR 44 P14 53" es una dirección auténtica), así
+# que descartaba domicilios de verdad. El código de EQUIPO real no lleva
+# espacios ("46745X6D1") y va aparte, junto al chip; con la palabra "EQUIPO"
+# pegada delante ya lo corta `ETIQUETAS_SIGUIENTES`.
 
 # Una línea que sea solo una etiqueta no es un valor.
 SOLO_ETIQUETA = re.compile(
@@ -1147,7 +1149,6 @@ def _bloque_superior_izquierdo(lineas: list[LineaOCR]) -> list[str]:
         and not ETIQUETAS_SIGUIENTES.search(l.texto)
         and not SOLO_ETIQUETA.match(l.texto.strip())
         and not re.search(r"\bDOMICILIO|ADDRESS", l.texto, re.IGNORECASE)
-        and not CODIGO_EQUIPO.match(l.texto.strip())
     ]
 
     if not utiles:
@@ -1804,25 +1805,38 @@ def extraer_de_cara(
         # debajo); si no, la expresión regular original.
         nombre, candidatas = extraer_bloque_nombre(lineas)
 
-        # Si con la tarjeta entera no ha salido, se reintenta aislando la
-        # columna de campos, sin la fotografía del titular.
-        if not nombre and not candidatas:
-            nombre, candidatas = extraer_nombre_de_zona(recorte, deadline=deadline)
+        # Se reintenta SIEMPRE aislando la columna de campos (sin la
+        # fotografía del titular ni el holograma) cuando no ha salido un
+        # nombre directo, aunque ya hubiera candidatas de la tarjeta entera.
+        # Caso real: con el holograma fragmentando el OCR (97 líneas de 5
+        # caracteres de media), `extraer_bloque_nombre` encontraba APELLIDOS
+        # y devolvía candidatas, así que este reintento se saltaba por
+        # completo justo cuando más falta hacía: la lectura aislada es más
+        # limpia porque no compite con el ruido del resto de la tarjeta.
+        if not nombre:
+            nombre_zona, candidatas_zona = extraer_nombre_de_zona(recorte, deadline=deadline)
+            nombre = nombre_zona
+            candidatas = candidatas_zona + [c for c in candidatas if c not in candidatas_zona]
 
         if not nombre:
             nombre = extraer_nombre_completo(texto)
 
-        # Último recurso: si no se ha reconocido ninguna etiqueta, se dejan
-        # TODAS las líneas del anverso como candidatas. El MRZ del reverso
-        # dirá luego cuáles son el nombre y cuáles los apellidos; las demás
-        # (fechas, "ESPAÑA", "DNI"...) no casarán con nada y se descartan.
-        if not nombre and not candidatas:
-            candidatas = _lineas_candidatas_a_nombre(lineas)
+        # Red de seguridad amplia: TODAS las líneas del anverso que parezcan
+        # nombre, casen o no con la posición de una etiqueta. Se suman
+        # siempre que siga sin haber nombre, no solo cuando no había ninguna
+        # candidata: con la tarjeta muy fragmentada las candidatas "de
+        # posición" pueden venir mal cortadas y no casar luego con el MRZ, y
+        # más vale tener de sobra donde elegir que quedarse corto. El cotejo
+        # con el MRZ (`componer_nombre_con_mrz`) descarta solo él las líneas
+        # que no coincidan con sus tokens, así que añadir de más no hace daño.
+        if not nombre:
+            amplias = _lineas_candidatas_a_nombre(lineas)
+            candidatas = candidatas + [c for c in amplias if c not in candidatas]
 
             if candidatas:
                 logger.info(
-                    "Sin etiquetas en el anverso: %d líneas quedan a la espera "
-                    "de que el MRZ diga cuál es cuál",
+                    "%d líneas candidatas a nombre quedan a la espera de que "
+                    "el MRZ diga cuál es cuál",
                     len(candidatas),
                 )
 
