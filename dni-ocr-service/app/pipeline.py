@@ -474,10 +474,8 @@ MRZ_VACIO = {
 def leer_mrz(imagen_reverso: np.ndarray, deadline: float | None = None) -> dict:
     """Recorta la franja inferior del reverso y lee el MRZ.
 
-    Como mucho hace dos pasadas de Tesseract: la franja tal cual y, si de ahí
-    no sale nada, la misma binarizada. La versión anterior probaba tres
-    recortes por dos variantes, seis pasadas, y en un servidor de 0,1 CPU eso
-    solo eran cuarenta segundos tirados cada vez que la cara no llevaba MRZ.
+    Una sola pasada de Tesseract, siempre en color: sin binarizar ni pasar a
+    blanco y negro.
     """
     alto = imagen_reverso.shape[0]
 
@@ -486,31 +484,24 @@ def leer_mrz(imagen_reverso: np.ndarray, deadline: float | None = None) -> dict:
     if franja.size == 0:
         return dict(MRZ_VACIO)
 
-    for etiqueta, imagen in (("directa", franja), ("binarizada", None)):
-        if _sin_tiempo(deadline):
-            logger.warning("Sin tiempo para seguir intentando leer el MRZ")
-            break
+    if _sin_tiempo(deadline):
+        logger.warning("Sin tiempo para leer el MRZ")
+        return dict(MRZ_VACIO)
 
-        if imagen is None:
-            imagen = preprocesar_recorte_para_ocr(franja)
+    try:
+        texto = pytesseract.image_to_string(franja, config=CONFIG_MRZ)
+    except pytesseract.TesseractError as error:
+        logger.warning("Tesseract ha fallado leyendo el MRZ: %s", error)
+        return dict(MRZ_VACIO)
 
-        try:
-            texto = pytesseract.image_to_string(imagen, config=CONFIG_MRZ)
-        except pytesseract.TesseractError as error:
-            logger.warning("Tesseract ha fallado leyendo el MRZ: %s", error)
-            continue
+    lineas = localizar_lineas_mrz(texto)
 
-        lineas = localizar_lineas_mrz(texto)
-
-        if not lineas:
-            continue
-
+    if lineas:
         datos = parsear_mrz(lineas)
 
         if datos.get("nombre") or datos.get("numero"):
             logger.info(
-                "MRZ leído (%s): numero=%s valido=%s nombre=%s completo=%s",
-                etiqueta,
+                "MRZ leído: numero=%s valido=%s nombre=%s completo=%s",
                 datos.get("numero"),
                 datos.get("numero_valido"),
                 bool(datos.get("nombre")),
@@ -1024,28 +1015,26 @@ def _recortar_zona(
 
 
 def _leer_zona(imagen: np.ndarray, deadline: float | None = None) -> list[LineaOCR]:
-    """OCR de una zona concreta, probando en color y binarizado.
+    """OCR de una zona concreta, probando dos segmentaciones distintas.
 
     Aislar la zona mejora mucho el análisis de estructura de Tesseract: en el
     reverso, el bloque del MRZ es tan denso y contrastado que acapara la
     segmentación y el domicilio se pierde; en el anverso, la fotografía del
-    titular estorba de forma parecida.
+    titular estorba de forma parecida. Las dos pasadas se hacen en color,
+    sin binarizar.
     """
-    intentos = ((imagen, config_ocr(4)), (None, config_ocr(6)))
+    intentos = (config_ocr(4), config_ocr(6))
 
     mejores: list[LineaOCR] = []
 
-    for fuente, config in intentos:
+    for config in intentos:
         if _sin_tiempo(deadline):
             logger.warning("Sin tiempo para leer la zona")
             break
 
-        if fuente is None:
-            fuente = preprocesar_recorte_para_ocr(imagen)
-
         try:
             datos = pytesseract.image_to_data(
-                fuente, config=config, output_type=pytesseract.Output.DICT
+                imagen, config=config, output_type=pytesseract.Output.DICT
             )
         except pytesseract.TesseractError as error:
             logger.warning("Tesseract ha fallado leyendo la zona: %s", error)
@@ -1323,27 +1312,6 @@ def extraer_dni_anverso(texto: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Preprocesado y detección del documento
 # ---------------------------------------------------------------------------
-
-def preprocesar_recorte_para_ocr(imagen_color: np.ndarray) -> np.ndarray:
-    gris = cv2.cvtColor(imagen_color, cv2.COLOR_BGR2GRAY)
-
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    contraste = clahe.apply(gris)
-
-    fondo = cv2.GaussianBlur(contraste, (0, 0), sigmaX=25, sigmaY=25)
-    normalizada = cv2.divide(contraste, fondo, scale=255)
-
-    binaria = cv2.adaptiveThreshold(
-        normalizada,
-        255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        41,
-        12,
-    )
-
-    return binaria
-
 
 def ordenar_puntos(puntos) -> np.ndarray:
     puntos = np.asarray(puntos, dtype=np.float32)
@@ -1812,16 +1780,6 @@ def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
     recorte = _preparar_para_ocr(imagen)
 
     texto, lineas = ocr_con_posiciones(recorte, deadline=deadline)
-
-    # Si el OCR en color va flojo, reintentar con la versión binarizada.
-    if _puntuar_texto_ocr(texto) < 100 and not _sin_tiempo(deadline):
-        texto_binario, lineas_binario = ocr_con_posiciones(
-            preprocesar_recorte_para_ocr(recorte),
-            configuraciones=CONFIGURACIONES_OCR[:1],
-            deadline=deadline,
-        )
-        if _puntuar_texto_ocr(texto_binario) > _puntuar_texto_ocr(texto):
-            texto, lineas = texto_binario, lineas_binario
 
     etiquetas = [
         e
