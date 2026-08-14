@@ -140,6 +140,34 @@ def test_lector_no_disponible_no_lanza():
     return correcto
 
 
+def test_apagado_por_defecto_no_intenta_cargar():
+    """Con el interruptor en "no" (el valor por defecto sin DNI_OCR_EASYOCR),
+    no debe intentarse ni importar `easyocr`.
+
+    Caso real: en una instancia de Render de 512 MB, cargar EasyOCR mataba
+    el contenedor entero con SIGKILL (exit 137) -algo que ningún try/except
+    de Python puede evitar una vez ha empezado a cargarse-. Por eso el
+    interruptor tiene que estar en "no" salvo que se active a propósito.
+    """
+    intentado = False
+
+    def import_vigilado(nombre, *args, **kwargs):
+        nonlocal intentado
+        if nombre == "easyocr":
+            intentado = True
+        return __import__(nombre, *args, **kwargs)
+
+    with mock.patch.object(P, "EASYOCR_DISPONIBLE", False), mock.patch.object(
+        P, "LECTOR_EASYOCR", None
+    ), mock.patch("builtins.__import__", side_effect=import_vigilado):
+        lector = P._lector_easyocr()
+
+    correcto = lector is None and not intentado
+
+    print(f"  {'OK   ' if correcto else 'FALLO'} apagado no intenta importar easyocr")
+    return correcto
+
+
 def main() -> int:
     pruebas = [
         test_conversion_de_formato,
@@ -147,6 +175,7 @@ def main() -> int:
         test_no_se_llama_si_tesseract_ya_tuvo_domicilio,
         test_fallo_de_easyocr_no_rompe_la_extraccion,
         test_lector_no_disponible_no_lanza,
+        test_apagado_por_defecto_no_intenta_cargar,
     ]
 
     fallos = [p.__name__ for p in pruebas if not p()]

@@ -1841,18 +1841,23 @@ def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
     #     limpio (sin el ruido de una foto) Tesseract puede seguir agrupando
     #     líneas enteras aunque el texto salga leído "del revés" y por tanto
     #     irreconocible.
-    # No se exige que `etiquetas` esté vacía: sobre 104 líneas de basura basta
-    # que una palabra corta como "SEXO" aparezca por azar para que la lista
-    # deje de estar vacía, y con eso bastaba para que este reintento nunca
-    # llegara a dispararse (caso real). En su lugar se usa la puntuación
-    # agregada, que exige más que una sola coincidencia suelta.
+    #
+    # La fragmentación (primera firma) NO se condiciona a la puntuación de
+    # etiquetas: sobre una tarjeta rota en 26-74 líneas de basura es habitual
+    # que dos o tres palabras cortas (SEXO, DNI, IDESP...) aparezcan sueltas
+    # por azar y entre todas sumen más que el umbral de "ya se ha leído
+    # bien" -aunque el texto real siga siendo irreconocible-. Requerir esa
+    # puntuación baja AQUÍ (como se hizo en una versión anterior) dejaba sin
+    # disparar el reintento justo en los casos peor fragmentados, que son los
+    # que más lo necesitan. El coste de comprobar de más es bajo (cuatro
+    # pasadas baratas con margen de seguridad antes de cambiar nada) y el de
+    # no comprobar cuando hacía falta ha sido, en la práctica, mucho más caro.
     # Antes esto solo se registraba como aviso de "posible desenfoque"; ahora
     # se intenta arreglar antes de rendirse.
     if (
         lineas
-        and puntuacion_lectura < PUNTUACION_SUFICIENTE
-        and (caracteres_por_linea < 6 or puntuacion_lectura < 1)
         and not _sin_tiempo(deadline)
+        and (caracteres_por_linea < 6 or puntuacion_lectura < 1)
     ):
         recorte_corregido = _corregir_rotacion(recorte, deadline=deadline)
 
@@ -1917,14 +1922,31 @@ def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
 # aislar zonas ni probar rotaciones.
 #
 # El coste es alto: bastante más lento que toda la tanda de Tesseract junta,
-# y cerca de 500 MB de RAM solo para cargar el modelo. En una instancia con
-# poca memoria puede no caber. Por eso:
-#   - se carga de forma perezosa (a la primera falta que hace), no al
-#     arrancar: si no cupiera, mejor que falle aquí que tumbe el contenedor;
-#   - cualquier fallo (falta de memoria, tiempo agotado, lo que sea) se traga
-#     y se sigue solo con lo que ya tuviera Tesseract, nunca tira la petición.
+# y cerca de 500 MB de RAM solo para cargar el modelo.
+#
+# APAGADO POR DEFECTO. Probado en real sobre una instancia de Render de
+# 512 MB: el contenedor entero acaba muerto por SIGKILL (exit 137), no con
+# una excepción de Python. El try/except de `_lector_easyocr` protege de que
+# EasyOCR falle por su cuenta (import roto, error de inferencia, tiempo
+# agotado...), pero no hay forma de protegerse en Python de que el sistema
+# operativo mate el proceso entero desde fuera por quedarse sin memoria: para
+# cuando el `except` podría actuar, el proceso ya no existe. Así que hace
+# falta activarlo a propósito -con más RAM por debajo- en vez de que se
+# dispare solo la primera vez que Tesseract se queda corto.
+EASYOCR_HABILITADO = os.environ.get("DNI_OCR_EASYOCR", "").strip().lower() in (
+    "1",
+    "true",
+    "si",
+    "sí",
+)
+
 LECTOR_EASYOCR: Any = None
-EASYOCR_DISPONIBLE = True  # se pone a False en cuanto falle una vez
+EASYOCR_DISPONIBLE = EASYOCR_HABILITADO  # se pone a False en cuanto falle una vez
+
+logger.info(
+    "Respaldo de EasyOCR: %s (variable DNI_OCR_EASYOCR)",
+    "activado" if EASYOCR_HABILITADO else "desactivado",
+)
 
 
 def _lector_easyocr() -> Any:

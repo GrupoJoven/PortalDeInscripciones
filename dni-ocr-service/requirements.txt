@@ -8,10 +8,14 @@ numpy==2.2.1
 python-multipart==0.0.20
 
 # Respaldo de EasyOCR cuando Tesseract no consigue leer el nombre o el
-# domicilio (ver `_leer_con_easyocr` en pipeline.py). Se carga de forma
-# perezosa y falla en silencio si no cabe en memoria, así que no es
-# imprescindible para que el servicio arranque -pero si no está instalado,
-# ese respaldo nunca llega a intentarse-.
+# domicilio (ver `_leer_con_easyocr` en pipeline.py). APAGADO POR DEFECTO:
+# hace falta poner DNI_OCR_EASYOCR=1 para activarlo.
+#
+# Probado en real: sobre una instancia de Render de 512 MB, cargar el modelo
+# (~500 MB solo el motor) mataba el contenedor entero con SIGKILL (exit 137),
+# no con una excepción que el código pudiera atrapar. Con menos de ~1 GB de
+# RAM disponible para el servicio, no actives esta variable.
+#
 # El índice de PyTorch da la build solo-CPU: bastante más ligera que la que
 # trae CUDA de serie, que aquí no hace ninguna falta.
 --extra-index-url https://download.pytorch.org/whl/cpu
