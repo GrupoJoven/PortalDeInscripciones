@@ -820,9 +820,52 @@ def _tokens(valor: str) -> list[str]:
     return [t for t in re.split(r"[\s\-]+", valor.upper()) if len(t) >= 3]
 
 
+def _distancia_edicion(a: str, b: str) -> int:
+    """Distancia de Levenshtein: cuántas sustituciones/inserciones/borrados
+    de un carácter hacen falta para convertir una palabra en la otra."""
+    if len(a) < len(b):
+        a, b = b, a
+
+    fila_anterior = list(range(len(b) + 1))
+
+    for i, letra_a in enumerate(a, 1):
+        fila_actual = [i]
+
+        for j, letra_b in enumerate(b, 1):
+            coste = 0 if letra_a == letra_b else 1
+            fila_actual.append(
+                min(
+                    fila_anterior[j] + 1,  # borrar
+                    fila_actual[j - 1] + 1,  # insertar
+                    fila_anterior[j - 1] + coste,  # sustituir (o igual)
+                )
+            )
+
+        fila_anterior = fila_actual
+
+    return fila_anterior[-1]
+
+
 def _coinciden(uno: str, otro: str) -> bool:
-    """Dos palabras se refieren a lo mismo aunque una venga cortada."""
-    return uno.startswith(otro[:4]) or otro.startswith(uno[:4])
+    """Dos palabras se refieren a lo mismo, aunque una venga cortada o con
+    algún carácter mal leído.
+
+    Antes solo miraba si los 4 primeros caracteres coincidían. Un solo
+    carácter mal reconocido al principio de la palabra —frecuente: ahí es
+    donde arranca el trazo, y el ruido de la foto pega más— bastaba para que
+    no casase nada aunque el resto fuera idéntico ("BLOM" vs "8LOM").
+    Se tolera un único cambio (sustituir, insertar o borrar una letra), y
+    solo entre palabras de longitud parecida: para palabras cortas, un
+    cambio de más ya las convierte en otra palabra real distinta
+    ("GARCIA" -> "MARIA" son dos cambios, y no deben confundirse).
+    """
+    if uno.startswith(otro[:4]) or otro.startswith(uno[:4]):
+        return True
+
+    if abs(len(uno) - len(otro)) > 1:
+        return False
+
+    return _distancia_edicion(uno, otro) <= 1
 
 
 def componer_nombre_con_mrz(lineas: list[str], mrz: dict) -> str | None:
@@ -868,6 +911,16 @@ def componer_nombre_con_mrz(lineas: list[str], mrz: dict) -> str | None:
             nombres.append(linea)
 
     if not apellidos or not nombres:
+        # Se deja constancia de contra qué se ha comparado: sin esto, un
+        # fallo aquí es una caja negra -no se sabe si las líneas candidatas
+        # eran basura o si el cotejo con el MRZ fue el que falló-.
+        logger.info(
+            "No se ha podido cotejar el nombre con el MRZ. "
+            "MRZ: apellidos=%s nombre=%s. Líneas candidatas del anverso: %s",
+            apellidos_mrz,
+            nombre_mrz,
+            lineas,
+        )
         return None
 
     compuesto = f"{' '.join(nombres)} {' '.join(apellidos)}"
