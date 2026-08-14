@@ -1831,6 +1831,8 @@ def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
 
     caracteres_por_linea = len(texto) / len(lineas) if lineas else 0
 
+    puntuacion_lectura = _puntuar_texto_ocr(texto)
+
     # Dos firmas distintas de una tarjeta girada 90°/180° (comprobado con
     # fotos reales y con tarjetas sintéticas):
     #   - decenas de líneas de 3-5 caracteres: lo típico en una foto real,
@@ -1839,12 +1841,17 @@ def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
     #     limpio (sin el ruido de una foto) Tesseract puede seguir agrupando
     #     líneas enteras aunque el texto salga leído "del revés" y por tanto
     #     irreconocible.
+    # No se exige que `etiquetas` esté vacía: sobre 104 líneas de basura basta
+    # que una palabra corta como "SEXO" aparezca por azar para que la lista
+    # deje de estar vacía, y con eso bastaba para que este reintento nunca
+    # llegara a dispararse (caso real). En su lugar se usa la puntuación
+    # agregada, que exige más que una sola coincidencia suelta.
     # Antes esto solo se registraba como aviso de "posible desenfoque"; ahora
     # se intenta arreglar antes de rendirse.
     if (
         lineas
-        and not etiquetas
-        and (caracteres_por_linea < 6 or _puntuar_texto_ocr(texto) < 1)
+        and puntuacion_lectura < PUNTUACION_SUFICIENTE
+        and (caracteres_por_linea < 6 or puntuacion_lectura < 1)
         and not _sin_tiempo(deadline)
     ):
         recorte_corregido = _corregir_rotacion(recorte, deadline=deadline)
