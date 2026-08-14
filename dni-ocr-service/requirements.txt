@@ -6,3 +6,14 @@ pytesseract==0.3.13
 opencv-python-headless==4.10.0.84
 numpy==2.2.1
 python-multipart==0.0.20
+
+# Respaldo de EasyOCR cuando Tesseract no consigue leer el nombre o el
+# domicilio (ver `_leer_con_easyocr` en pipeline.py). Se carga de forma
+# perezosa y falla en silencio si no cabe en memoria, así que no es
+# imprescindible para que el servicio arranque -pero si no está instalado,
+# ese respaldo nunca llega a intentarse-.
+# El índice de PyTorch da la build solo-CPU: bastante más ligera que la que
+# trae CUDA de serie, que aquí no hace ninguna falta.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.13.0
+easyocr==1.7.2

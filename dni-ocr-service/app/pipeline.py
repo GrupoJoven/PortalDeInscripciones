@@ -1906,6 +1906,106 @@ def leer_cara(imagen: np.ndarray, deadline: float | None = None) -> CaraLeida:
     return CaraLeida(recorte=recorte, texto=texto, lineas=lineas, nitidez=nitidez)
 
 
+# ---------------------------------------------------------------------------
+# Respaldo con EasyOCR
+# ---------------------------------------------------------------------------
+# Última red de seguridad cuando Tesseract no ha dado ni nombre ni domicilio.
+# Sobre fotos reales que Tesseract no conseguía leer (holograma en el
+# anverso, tinta clara en el domicilio), EasyOCR —un motor basado en redes
+# neuronales, no en el análisis clásico de página de Tesseract— leyó la
+# tarjeta completa en una sola pasada, etiquetas incluidas, sin falta de
+# aislar zonas ni probar rotaciones.
+#
+# El coste es alto: bastante más lento que toda la tanda de Tesseract junta,
+# y cerca de 500 MB de RAM solo para cargar el modelo. En una instancia con
+# poca memoria puede no caber. Por eso:
+#   - se carga de forma perezosa (a la primera falta que hace), no al
+#     arrancar: si no cupiera, mejor que falle aquí que tumbe el contenedor;
+#   - cualquier fallo (falta de memoria, tiempo agotado, lo que sea) se traga
+#     y se sigue solo con lo que ya tuviera Tesseract, nunca tira la petición.
+LECTOR_EASYOCR: Any = None
+EASYOCR_DISPONIBLE = True  # se pone a False en cuanto falle una vez
+
+
+def _lector_easyocr() -> Any:
+    """Instancia (una sola vez) el lector de EasyOCR, o `None` si no se puede."""
+    global LECTOR_EASYOCR, EASYOCR_DISPONIBLE
+
+    if not EASYOCR_DISPONIBLE:
+        return None
+
+    if LECTOR_EASYOCR is not None:
+        return LECTOR_EASYOCR
+
+    try:
+        import easyocr
+
+        # quantize=False: con los pesos cuantizados (el valor por defecto en
+        # CPU, pensado para ir más rápido) algunos recortes reales hacían
+        # fallar la inferencia con "ChooseQuantizationParams, min should be
+        # less than or equal to max" -un problema conocido de EasyOCR con la
+        # cuantización dinámica de PyTorch sobre ciertas imágenes, no algo
+        # que dependa de este documento en concreto. En precisión completa
+        # tarda más pero no se ha visto fallar.
+        LECTOR_EASYOCR = easyocr.Reader(["es"], gpu=False, quantize=False)
+        logger.info("Lector de EasyOCR cargado como respaldo")
+    except Exception:  # noqa: BLE001 - un respaldo no puede tirar el servicio
+        logger.exception(
+            "No se ha podido cargar EasyOCR (¿falta de memoria?); "
+            "se sigue sin este respaldo"
+        )
+        EASYOCR_DISPONIBLE = False
+        LECTOR_EASYOCR = None
+
+    return LECTOR_EASYOCR
+
+
+def _easyocr_a_lineas(resultados: list) -> list[LineaOCR]:
+    """Convierte la salida de EasyOCR al mismo formato `LineaOCR` que usa el
+    resto del pipeline, para reutilizar la extracción por posición ya escrita
+    para Tesseract en vez de duplicarla.
+    """
+    lineas = []
+
+    for cuadro, texto, confianza in resultados:
+        texto = normalizar_espacios(texto)
+
+        if not texto or confianza < 0.3:
+            continue
+
+        xs = [p[0] for p in cuadro]
+        ys = [p[1] for p in cuadro]
+
+        lineas.append(LineaOCR(texto, int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))))
+
+    lineas.sort(key=lambda l: (l.y0, l.x0))
+
+    return lineas
+
+
+def _leer_con_easyocr(imagen: np.ndarray, deadline: float | None = None) -> list[LineaOCR]:
+    """Lee una cara entera con EasyOCR. Devuelve `[]` si no hay respaldo
+    disponible, se agota el tiempo, o falla por cualquier motivo: nunca
+    lanza, porque esto solo se llama cuando Tesseract ya se ha quedado corto
+    y no debe impedir devolver lo que sí se tenga.
+    """
+    if _sin_tiempo(deadline):
+        return []
+
+    lector = _lector_easyocr()
+
+    if lector is None:
+        return []
+
+    try:
+        resultados = lector.readtext(imagen, detail=1)
+    except Exception:  # noqa: BLE001 - respaldo best-effort
+        logger.exception("EasyOCR ha fallado leyendo la cara")
+        return []
+
+    return _easyocr_a_lineas(resultados)
+
+
 def extraer_de_cara(
     cara: CaraLeida,
     es_anverso: bool,
@@ -1954,6 +2054,23 @@ def extraer_de_cara(
                     len(candidatas),
                 )
 
+        # Último recurso, y el más caro: releer la tarjeta entera con
+        # EasyOCR. Solo se llega aquí si Tesseract no ha dado nombre por
+        # ningún camino de los de arriba.
+        if not nombre:
+            lineas_eo = _leer_con_easyocr(recorte, deadline=deadline)
+
+            if lineas_eo:
+                logger.info("Probando el respaldo de EasyOCR para el nombre")
+
+                nombre_eo, candidatas_eo = extraer_bloque_nombre(lineas_eo)
+                nombre = nombre_eo
+
+                if not candidatas_eo:
+                    candidatas_eo = _lineas_candidatas_a_nombre(lineas_eo)
+
+                candidatas = candidatas + [c for c in candidatas_eo if c not in candidatas]
+
         return ResultadoCara(
             es_anverso=True,
             numero=extraer_dni_anverso(texto),
@@ -1975,6 +2092,16 @@ def extraer_de_cara(
     # así que se reintenta con la franja superior aislada.
     if not domicilio:
         domicilio = extraer_domicilio_de_zona(recorte, deadline=deadline)
+
+    # Último recurso, y el más caro: releer la tarjeta entera con EasyOCR.
+    # Sobre fotos reales que Tesseract no conseguía leer por la tinta clara
+    # del domicilio, EasyOCR sí la lee, y sin falta de aislar la zona.
+    if not domicilio:
+        lineas_eo = _leer_con_easyocr(recorte, deadline=deadline)
+
+        if lineas_eo:
+            logger.info("Probando el respaldo de EasyOCR para el domicilio")
+            domicilio = extraer_domicilio_por_posicion(lineas_eo)
 
     # El MRZ da el número con dígito de control, que es lo más fiable.
     mrz = leer_mrz(recorte, deadline=deadline)
