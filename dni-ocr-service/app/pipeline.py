@@ -90,6 +90,16 @@ PRESUPUESTO_SEGUNDOS = float(os.environ.get("DNI_OCR_PRESUPUESTO_SEGUNDOS", 100)
 # Ampliar una imagen pequeña no sirve: hace falta detalle real en la foto.
 ANCHO_OCR = 1700
 
+# Ancho al que se amplían las zonas recortadas (domicilio, nombre) antes de
+# releerlas de forma aislada. El domicilio en particular lleva la tinta más
+# clara y el cuerpo de letra más pequeño de toda la tarjeta: a 1700 px de
+# ancho de tarjeta completa a menudo no llega a los 20-30 px de alto que
+# Tesseract necesita. Como aquí ya se trabaja sobre un recorte pequeño (una
+# franja, no la tarjeta entera), ampliarlo más sale barato: unos segundos
+# extra de una pasada de Tesseract sobre una imagen pequeña, no sobre la
+# tarjeta completa.
+ANCHO_OCR_ZONA = 2300
+
 
 def idioma_disponible() -> str:
     """Idioma de Tesseract a usar: 'spa' si está instalado, si no 'eng'.
@@ -589,13 +599,28 @@ ETIQUETA_TRAS_NOMBRE = re.compile(
 # calle españoles ("CALLE PADRE MANJON"), así que solo se cortan cuando van
 # como encabezado de la filiación, es decir seguidos de "DE" o al empezar la
 # línea junto a HIJO.
+#
+# El DNI es bilingüe en las comunidades con lengua cooficial, y esas
+# etiquetas van impresas junto a las castellanas: "LUGAR DE NACIMIENTO /
+# LLOC DE NAIXEMENT", "HIJO/A DE / FILL/A DE", etc. Caso real visto en
+# producción: al no reconocerse "NACIMIENTO" ni su traducción catalana
+# "NAIXEMENT", ese bloque se coló entero como domicilio ("44 P14 53, DE
+# NAIXEMENT", que en realidad era EQUIPO + LUGAR DE NAIXEMENT).
 ETIQUETAS_SIGUIENTES = re.compile(
     r"\b("
-    r"LUGAR\s+DE|DE\s+NAC[I1L]M|NAC[I1L]M[I1L]ENT|EQU[I1L]PO|"
-    r"H[I1L]J[O0]\s*/?\s*A?\s*DE|[I1L]DESP|PROV[I1L]NC[I1L]A\s*/"
+    r"LUGAR\s+DE|LLOC\s+DE|DE\s+NAC[I1L]M|NAC[I1L]M[I1L]ENT|"
+    r"NAIXEMENT|NACEMENTO|JAIOTZ|EQU[I1L]PO|"
+    r"H[I1L]J[O0]\s*/?\s*A?\s*DE|FILL\s*/?\s*A?\s*DE|FILLO\s*/?\s*A?\s*DE|"
+    r"SEME.{0,3}ALABA|[I1L]DESP|PROV[I1L]NC[I1L]A\s*/"
     r")",
     re.IGNORECASE,
 )
+
+# Forma característica de un código de EQUIPO (oficina emisora) leído suelto,
+# sin la palabra "EQUIPO" pegada: dígitos, un bloque letra+dígitos, dígitos
+# ("44 P14 53"). Sin la etiqueta delante no hay forma de reconocerlo por
+# texto, así que se reconoce por su forma para que no se cuele como domicilio.
+CODIGO_EQUIPO = re.compile(r"^\d{1,3}\s*[A-Z]\d{1,4}\s*\d{0,4}$")
 
 # Una línea que sea solo una etiqueta no es un valor.
 SOLO_ETIQUETA = re.compile(
@@ -1037,6 +1062,22 @@ def _leer_zona(imagen: np.ndarray, deadline: float | None = None) -> list[LineaO
     return mejores
 
 
+def _escalar_zona(zona: np.ndarray, ancho_objetivo: int = ANCHO_OCR_ZONA) -> np.ndarray:
+    """Amplía un recorte pequeño para darle a Tesseract más píxeles por trazo.
+
+    A diferencia de `_escalar_para_ocr` (pensado para la tarjeta entera, cuyo
+    coste hay que vigilar), aquí ya se parte de una franja pequeña, así que se
+    amplía siempre que quepa margen, sin comprobar un mínimo antes.
+    """
+    ancho = zona.shape[1]
+
+    if ancho <= 0 or ancho >= ancho_objetivo:
+        return zona
+
+    factor = ancho_objetivo / ancho
+    return cv2.resize(zona, None, fx=factor, fy=factor, interpolation=cv2.INTER_CUBIC)
+
+
 def extraer_domicilio_de_zona(
     reverso: np.ndarray,
     deadline: float | None = None,
@@ -1051,7 +1092,7 @@ def extraer_domicilio_de_zona(
     if zona.size == 0:
         return None
 
-    lineas = _leer_zona(_escalar_para_ocr(zona), deadline=deadline)
+    lineas = _leer_zona(_escalar_zona(zona), deadline=deadline)
 
     logger.info("Zona del domicilio: %d líneas", len(lineas))
 
@@ -1072,7 +1113,7 @@ def extraer_nombre_de_zona(
     if zona.size == 0:
         return None, []
 
-    lineas = _leer_zona(_escalar_para_ocr(zona), deadline=deadline)
+    lineas = _leer_zona(_escalar_zona(zona), deadline=deadline)
 
     logger.info("Zona del nombre: %d líneas", len(lineas))
 
@@ -1106,6 +1147,7 @@ def _bloque_superior_izquierdo(lineas: list[LineaOCR]) -> list[str]:
         and not ETIQUETAS_SIGUIENTES.search(l.texto)
         and not SOLO_ETIQUETA.match(l.texto.strip())
         and not re.search(r"\bDOMICILIO|ADDRESS", l.texto, re.IGNORECASE)
+        and not CODIGO_EQUIPO.match(l.texto.strip())
     ]
 
     if not utiles:
