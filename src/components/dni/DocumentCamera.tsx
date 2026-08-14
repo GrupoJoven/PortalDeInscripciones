@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Zap, ZapOff, AlertCircle } from 'lucide-react';
+import { Zap, ZapOff, AlertCircle, RotateCcw } from 'lucide-react';
 
 import {
   DNI_ASPECT_RATIO,
+  NITIDEZ_MINIMA_AVISO,
   analyzeFrame,
   drawVisibleRegion,
   guideRectToVideoCrop,
+  nitidezCapturada,
   nitidezDeLienzo,
   type FrameAnalysis,
   type GuideRect,
@@ -61,6 +63,11 @@ export default function DocumentCamera({
   const [capturing, setCapturing] = useState(false);
   const [puedeForzar, setPuedeForzar] = useState(false);
   const [verDiagnostico, setVerDiagnostico] = useState(false);
+  const [avisoBorrosa, setAvisoBorrosa] = useState<{
+    base64: string;
+    dataUrl: string;
+    nitidez: number;
+  } | null>(null);
   const [guide, setGuide] = useState<GuideRect>({
     x: MARGEN_MARCO,
     y: 0.25,
@@ -395,10 +402,33 @@ export default function DocumentCamera({
       const dataUrl = elegido.toDataURL('image/jpeg', 0.92);
       const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
 
+      // El comprobador en vivo mide sobre un fotograma reducido a 320 px, muy
+      // permisivo a propósito; esta es la única comprobación sobre la foto
+      // que de verdad se va a subir. Solo avisa, no bloquea: mejor dejar
+      // seguir a quien lo necesite que atraparlo sin poder continuar.
+      const nitidez = nitidezCapturada(elegido);
+      console.info(
+        `[DNI] Nitidez de la foto capturada: ${nitidez.toFixed(0)} ` +
+          `(aviso por debajo de ${NITIDEZ_MINIMA_AVISO})`,
+      );
+
+      if (nitidez < NITIDEZ_MINIMA_AVISO) {
+        setAvisoBorrosa({ base64, dataUrl, nitidez });
+        return;
+      }
+
       onCapture(base64, dataUrl);
     } finally {
       setCapturing(false);
     }
+  };
+
+  const repetirTrasAviso = () => setAvisoBorrosa(null);
+
+  const usarFotoBorrosa = () => {
+    if (!avisoBorrosa) return;
+    onCapture(avisoBorrosa.base64, avisoBorrosa.dataUrl);
+    setAvisoBorrosa(null);
   };
 
   const puedeCapturar = ready && !cameraError && stableCount >= FOTOGRAMAS_ESTABLES;
@@ -622,6 +652,48 @@ export default function DocumentCamera({
           >
             {torchOn ? <ZapOff className="w-5 h-5" /> : <Zap className="w-5 h-5" />}
           </button>
+        )}
+
+        {/* Aviso tras disparar: la foto capturada mide por debajo del umbral
+            de nitidez. No bloquea -- el comprobador en vivo ya es permisivo
+            a propósito -- pero avisa antes de gastar el minuto de lectura en
+            el servidor con una foto que probablemente no sirva. */}
+        {avisoBorrosa && (
+          <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm flex flex-col items-center justify-center gap-4 p-6 text-center">
+            <img
+              src={avisoBorrosa.dataUrl}
+              alt="Foto capturada"
+              className="max-h-[45%] w-auto rounded-xl border border-white/20"
+            />
+
+            <div>
+              <AlertCircle className="w-8 h-8 text-amber-400 mx-auto mb-2" />
+              <p className="text-white font-bold">Esta foto puede haber salido borrosa</p>
+              <p className="text-white/70 text-sm mt-1 max-w-xs">
+                Es justo lo que más falla al leer el domicilio. Si puedes, repítela
+                sujetando el móvil quieto hasta que enfoque.
+              </p>
+            </div>
+
+            <div className="w-full max-w-xs space-y-2">
+              <button
+                type="button"
+                onClick={repetirTrasAviso}
+                className="w-full bg-white text-slate-900 py-3 rounded-2xl font-bold flex items-center justify-center gap-2"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Repetir la foto
+              </button>
+
+              <button
+                type="button"
+                onClick={usarFotoBorrosa}
+                className="w-full py-3 rounded-2xl font-semibold text-sm text-white/80 border border-white/25"
+              >
+                Usar esta foto igualmente
+              </button>
+            </div>
+          </div>
         )}
       </div>
 

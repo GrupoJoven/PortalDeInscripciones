@@ -484,6 +484,47 @@ export function nitidezDeLienzo(lienzo: HTMLCanvasElement): number {
   return medirNitidez(luma, ANCHO, { x0: 1, y0: 1, x1: ANCHO - 1, y1: alto - 1 });
 }
 
+/**
+ * Nitidez de una foto ya capturada, a su resolución real (sin reducirla a
+ * 700 px como hace `nitidezDeLienzo`, que solo sirve para comparar dos
+ * candidatas entre sí). El servicio de OCR calcula esta misma varianza del
+ * laplaciano sobre la tarjeta ya normalizada a ~1700 px de ancho, así que
+ * medirla aquí a una escala parecida (la foto capturada llega hasta 2200 px,
+ * ver `anchoDestino` en DocumentCamera) da un número comparable al que
+ * decide, en el servidor, si el domicilio se acaba descartando por ilegible.
+ *
+ * No es una traducción exacta: el laplaciano crece con la resolución para el
+ * mismo desenfoque real, y aquí se parte de un canvas más grande que el que
+ * procesa Python. `NITIDEZ_MINIMA_AVISO` compensa con un umbral algo más
+ * alto que el 40 que usa el servicio; conviene afinarlo con más casos reales.
+ */
+export function nitidezCapturada(lienzo: HTMLCanvasElement): number {
+  const ctx = lienzo.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return 0;
+
+  const { data } = ctx.getImageData(0, 0, lienzo.width, lienzo.height);
+  const luma = new Float32Array(lienzo.width * lienzo.height);
+
+  for (let i = 0, p = 0; i < data.length; i += 4, p += 1) {
+    luma[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  }
+
+  return medirNitidez(luma, lienzo.width, {
+    x0: 1,
+    y0: 1,
+    x1: lienzo.width - 1,
+    y1: lienzo.height - 1,
+  });
+}
+
+/**
+ * Por debajo de este valor conviene avisar de que la foto puede salir
+ * borrosa: es donde, en la práctica, el servicio de OCR empieza a descartar
+ * el domicilio por ilegible (ver el umbral de 40 en `pipeline.py`, aplicado
+ * sobre una imagen algo más pequeña que la que se mide aquí).
+ */
+export const NITIDEZ_MINIMA_AVISO = 55;
+
 function medirNitidez(luma: Float32Array, width: number, region: Region) {
   const x0 = Math.max(1, Math.floor(region.x0));
   const y0 = Math.max(1, Math.floor(region.y0));
