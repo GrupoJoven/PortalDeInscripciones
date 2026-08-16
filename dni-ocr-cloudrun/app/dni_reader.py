@@ -1176,8 +1176,8 @@ class DNIReader:
 
         return {
             "domicilio": self._clean_free_text(address),
-            "localidad": self._clean_free_text(city),
-            "provincia": self._clean_free_text(province),
+            "localidad": self._clean_place_text(city),
+            "provincia": self._clean_place_text(province),
             "lugar_nacimiento": self._clean_free_text(birth_place),
             "padres": self._clean_free_text(parents),
         }
@@ -1669,6 +1669,34 @@ class DNIReader:
             return None
         t = re.sub(r"\s+", " ", text).strip(" -/")
         return t or None
+
+    @staticmethod
+    def _clean_place_text(text: Optional[str]) -> Optional[str]:
+        """Limpia localidad/provincia: descarta restos de OCR con dígitos
+        (p.ej. un código postal mal leído como "82crN"), sin tocar el
+        nombre bilingüe (p.ej. "VALENCIA/VALÈNCIA" se mantiene tal cual,
+        con su "/" y ambos idiomas).
+        """
+        if not text:
+            return None
+        t = re.sub(r"\s+", " ", text).strip(" -/,")
+        if not t:
+            return None
+
+        fragments = re.split(r"(/)", t)
+        cleaned_fragments: List[str] = []
+        for fragment in fragments:
+            if fragment == "/":
+                cleaned_fragments.append(fragment)
+                continue
+            words = [w for w in fragment.strip().split(" ") if w and not re.search(r"\d", w)]
+            cleaned_fragments.append(" ".join(words).strip())
+
+        result = "".join(cleaned_fragments)
+        result = re.sub(r"/{2,}", "/", result)
+        result = result.strip(" /,")
+        result = re.sub(r"\s+", " ", result)
+        return result or None
 
     # -------------------------------------------------------------------------
     # Fusión y validaciones
