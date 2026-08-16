@@ -18,10 +18,10 @@ from app import mapping as M  # noqa: E402
 
 
 def _resultado(
-    numero="48718068C",
-    nombre="CARLOS",
-    apellidos="BLOM-DAHL RAMOS",
-    direccion="C. ALFAHUIR 44 P14 53",
+    numero="99999999Z",
+    nombre="PEDRO",
+    apellidos="PICA PIEDRA",
+    direccion="C. INVENTADA 15",
     localidad="VALÈNCIA",
     provincia="VALENCIA/VALÈNCIA",
     validez="2030-02-14",
@@ -43,10 +43,10 @@ def main() -> int:
     # --- Caso normal: apellido compuesto con guion --------------------
     r = M.mapear_respuesta(_resultado())
     ok = (
-        r["nombre"] == "CARLOS BLOM-DAHL RAMOS"
-        and r["numero"] == "48718068C"
+        r["nombre"] == "PEDRO PICA PIEDRA"
+        and r["numero"] == "99999999Z"
         and r["numero_valido"] is True
-        and r["domicilio_texto"] == "C. ALFAHUIR 44 P14 53, VALÈNCIA, VALENCIA/VALÈNCIA"
+        and r["domicilio_texto"] == "C. INVENTADA 15, VALÈNCIA, VALENCIA/VALÈNCIA"
         and r["campos_leidos"] == {"numero": True, "nombre": True, "domicilio": True}
     )
     print(f"  {'OK   ' if ok else 'FALLO'} caso normal (apellido compuesto)")
@@ -71,7 +71,7 @@ def main() -> int:
 
     # --- Domicilio con localidad/provincia duplicadas (dedupe) ---------
     r = M.mapear_respuesta(_resultado(localidad="MADRID", provincia="MADRID"))
-    ok = r["domicilio_texto"] == "C. ALFAHUIR 44 P14 53, MADRID"
+    ok = r["domicilio_texto"] == "C. INVENTADA 15, MADRID"
     print(f"  {'OK   ' if ok else 'FALLO'} domicilio con provincia duplicada -> {r['domicilio_texto']!r}")
     if not ok:
         fallos.append("domicilio duplicado")

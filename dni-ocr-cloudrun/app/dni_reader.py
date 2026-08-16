@@ -240,7 +240,7 @@ class DNIReader:
     }
 
     BACK_LABELS = {
-        "address": ["DOMICILIO", "DOMICILI", "ADDRESS", "ADRECA", "ENDEREZO"],
+        "address": ["DOMICILIO", "DOMICILI","DOMICII", "DOMICI" ,"ADDRESS", "ADRECA", "ENDEREZO"],
         "city": ["LOCALIDAD", "MUNICIPIO", "CITY", "LOCALITAT"],
         "province": ["PROVINCIA", "PROVINCE", "PROVINCIA / PROVINCE"],
         "birth_place": ["LUGAR DE NACIMIENTO", "PLACE OF BIRTH", "LLOC DE NAIXEMENT"],
