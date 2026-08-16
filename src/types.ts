@@ -20,6 +20,7 @@ export interface RegistrationForm {
   prefill_birth_date_entry: string | null;
   prefill_group_entry: string | null;
   prefill_address_entry: string | null;
+  prefill_postal_code_entry: string | null;
   dni_verification_enabled: boolean;
   google_form_id: string | null;
   google_form_watch_enabled: boolean;
@@ -54,6 +55,7 @@ export interface EditingForm {
   prefill_birth_date_entry: string;
   prefill_group_entry: string;
   prefill_address_entry: string;
+  prefill_postal_code_entry: string;
   dni_verification_enabled: boolean;
   google_form_id: string;
   google_form_edit_url: string;
@@ -147,6 +149,8 @@ export interface DniExtractedData {
   nombre: string | null;
   numero: string | null;
   domicilio_texto: string | null;
+  codigo_postal?: string | null;
+  en_zona_parroquial?: boolean | null;
   numero_valido?: boolean;
   avisos?: string[];
 }

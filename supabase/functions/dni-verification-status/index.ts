@@ -93,6 +93,8 @@ function sanitizeExtracted(
     nombre: minorWithoutDni ? null : ((extracted.nombre as string | null) ?? null),
     numero: (extracted.numero as string | null) ?? null,
     domicilio_texto: (extracted.domicilio_texto as string | null) ?? null,
+    codigo_postal: (extracted.codigo_postal as string | null) ?? null,
+    en_zona_parroquial: (extracted.en_zona_parroquial as boolean | null) ?? null,
   };
 }
 

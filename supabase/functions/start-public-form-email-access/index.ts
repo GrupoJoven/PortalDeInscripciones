@@ -20,6 +20,7 @@ type PublicFormRow = {
   prefill_name_entry: string | null;
   prefill_dni_entry: string | null;
   prefill_address_entry: string | null;
+  prefill_postal_code_entry: string | null;
 };
 
 type DniSession = {
@@ -91,7 +92,8 @@ Deno.serve(async (req) => {
         dni_verification_enabled,
         prefill_name_entry,
         prefill_dni_entry,
-        prefill_address_entry
+        prefill_address_entry,
+        prefill_postal_code_entry
       `)
       .eq("id", formId)
       .maybeSingle<PublicFormRow>();
@@ -328,6 +330,9 @@ function buildPublicFormAccessUrl(
       const domicilio = typeof extracted.domicilio_texto === "string"
         ? extracted.domicilio_texto.trim()
         : "";
+      const codigoPostal = typeof extracted.codigo_postal === "string"
+        ? extracted.codigo_postal.trim()
+        : "";
 
       if (form.prefill_dni_entry && numero) {
         url.searchParams.set(form.prefill_dni_entry, numero);
@@ -335,6 +340,10 @@ function buildPublicFormAccessUrl(
 
       if (form.prefill_address_entry && domicilio) {
         url.searchParams.set(form.prefill_address_entry, domicilio);
+      }
+
+      if (form.prefill_postal_code_entry && codigoPostal) {
+        url.searchParams.set(form.prefill_postal_code_entry, codigoPostal);
       }
 
       // Si se verificó el DNI de un progenitor porque el menor no tiene, el

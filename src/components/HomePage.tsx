@@ -476,7 +476,8 @@ export default function HomePage() {
                   Se rellenarán automáticamente en el formulario:
                   {dniExtracted?.numero ? ' el DNI' : ''}
                   {dniExtracted?.nombre ? ', el nombre' : ''}
-                  {dniExtracted?.domicilio_texto ? ' y el domicilio' : ''}.
+                  {dniExtracted?.domicilio_texto ? ', el domicilio' : ''}
+                  {dniExtracted?.codigo_postal ? ' y el código postal' : ''}.
                 </p>
               </div>
             )}

@@ -462,6 +462,101 @@ de 30 minutos caducadas (todas las de pruebas ya llevan mucho más).
 
 ---
 
+## Paso 10 — Código postal y zona parroquial
+
+El DNI no lleva el código postal. Desde esta versión, `dni-verification-upload`
+lo infiere llamando a la **API de Geocodificación de Google Maps** a partir
+del domicilio ya leído (sin el piso/puerta, que se recorta antes de
+preguntar), y comprueba si es el de la zona parroquial (CP **46010**). Es un
+dato best-effort: si la API falla o no encuentra la dirección, la
+verificación no se bloquea, solo avisa de que habrá que rellenarlo a mano.
+
+### 10.1 Activar la API y crear la clave
+
+1. En el **mismo proyecto de Google Cloud** que ya usas para Cloud Run (la
+   facturación ya está vinculada, no hace falta un proyecto nuevo):
+   https://console.cloud.google.com/apis/library/geocoding-backend.googleapis.com
+   → **Habilitar**.
+2. Crea una API key en
+   https://console.cloud.google.com/apis/credentials → **Crear
+   credenciales → Clave de API**.
+3. **Restríngela**: edítala y en "Restricciones de API" marca solo
+   **Geocoding API**. No hace falta restricción por IP (las Edge Functions
+   de Supabase no tienen IP fija): la clave nunca llega al navegador, solo la
+   usa el servidor, así que la restricción por API ya es suficiente
+   seguridad.
+
+### 10.2 Dar la clave a Supabase
+
+```powershell
+supabase secrets set GOOGLE_MAPS_API_KEY=<tu-clave> --project-ref pqycvrpdyebshkfaxzmi
+```
+
+Si no se configura este secreto, el portal sigue funcionando exactamente
+igual que antes: simplemente no se infiere el código postal (se loguea un
+aviso) y en la revisión del móvil aparece el mensaje de "tendrás que
+indicarlo a mano".
+
+### 10.3 Ejecutar la migración nueva
+
+Igual que en el paso 3: abre
+https://supabase.com/dashboard/project/pqycvrpdyebshkfaxzmi/sql/new, pega el
+contenido de `supabase/migrations/20260816120000_dni_postal_code.sql` y
+pulsa **Run**.
+
+**Comprobación:**
+
+```sql
+select column_name
+from information_schema.columns
+where table_name = 'registration_forms'
+  and column_name = 'prefill_postal_code_entry';
+```
+
+### 10.4 Redesplegar las funciones tocadas
+
+```powershell
+supabase functions deploy dni-verification-upload
+supabase functions deploy dni-verification-session
+supabase functions deploy dni-verification-status
+supabase functions deploy start-public-form-email-access
+supabase functions deploy verify-public-form-email-token
+```
+
+### 10.5 Añadir la pregunta al formulario y configurarla en el panel
+
+1. En el formulario de Google de prueba, añade una pregunta de respuesta
+   corta **Código Postal** y consigue su `entry.XXXXXXXXX` (menú de tres
+   puntos → **Obtener enlace prerrellenado**, igual que en el paso 7.2).
+2. En el panel de administración, edita el formulario → sección
+   **Campos de prerrelleno de la verificación de DNI** → rellena el nuevo
+   campo **CÓDIGO POSTAL**. Es opcional: si lo dejas en blanco, simplemente
+   no se prerrellena nada ahí, el resto sigue funcionando igual.
+
+### 10.6 Probarlo
+
+Repite el paso 8 con un DNI real. En la pantalla de revisión del móvil, bajo
+"Domicilio", debe aparecer un campo **C.P.** con el código inferido y un
+aviso verde "Dentro de la zona parroquial" o ámbar "Fuera de la zona
+parroquial". El formulario de Google final debe llegar con el código postal
+ya relleno.
+
+Para comprobar que el fallo no bloquea nada, quita temporalmente el secreto
+`GOOGLE_MAPS_API_KEY` (o pon uno inválido) y repite la prueba: debe seguir
+pudiéndose confirmar la verificación, con el aviso de "no se ha podido
+inferir el código postal automáticamente".
+
+### Nota de coste
+
+La Geocoding API cuesta del orden de $5 por cada 1000 peticiones, con
+$200/mes de crédito gratuito de Google Maps Platform (unas 40 000 peticiones
+gratis al mes). Al volumen de este portal no debería generar ningún cargo,
+pero conviene fijar un presupuesto y una alerta en **Facturación →
+Presupuestos y alertas** del mismo proyecto de Google Cloud, tal como se
+explicó para Cloud Run.
+
+---
+
 ## Si algo falla
 
 | Síntoma | Causa probable | Solución |
@@ -544,6 +639,7 @@ nombre y domicilio ya rellenados
 
 - `registration_forms.dni_verification_enabled` (booleano, por defecto `false`)
 - `registration_forms.prefill_address_entry`
+- `registration_forms.prefill_postal_code_entry` (paso 10, opcional)
 - La tabla `dni_verification_sessions` con RLS activado y **sin policies**:
   solo se accede desde las Edge Functions con `service_role`.
 - El bucket privado `dni_uploads`.

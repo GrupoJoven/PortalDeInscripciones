@@ -526,6 +526,28 @@ export default function DniCapturePage() {
                   etiqueta="Domicilio"
                   valor={extracted.domicilio_texto}
                 />
+
+                <div>
+                  <CampoLeido
+                    etiqueta="C.P."
+                    valor={extracted.codigo_postal}
+                    opcional
+                  />
+
+                  {extracted.codigo_postal && (
+                    <span
+                      className={`mt-1.5 inline-flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full border ${
+                        extracted.en_zona_parroquial
+                          ? 'bg-green-50 text-green-700 border-green-200'
+                          : 'bg-amber-50 text-amber-800 border-amber-200'
+                      }`}
+                    >
+                      {extracted.en_zona_parroquial
+                        ? 'Dentro de la zona parroquial'
+                        : 'Fuera de la zona parroquial'}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {minorWithoutDni && (
@@ -659,10 +681,14 @@ function CampoLeido({
   etiqueta,
   valor,
   aviso,
+  opcional,
 }: {
   etiqueta: string;
   valor: string | null | undefined;
   aviso?: string;
+  /** Campo best-effort (p.ej. inferido, no leído del documento): un valor
+   * vacío no es un error, así que se muestra en gris en vez de en rojo. */
+  opcional?: boolean;
 }) {
   const vacio = !valor || !valor.trim();
 
@@ -674,10 +700,14 @@ function CampoLeido({
 
       <p
         className={`text-base font-semibold break-words ${
-          vacio ? 'text-red-600' : 'text-slate-900'
+          vacio ? (opcional ? 'text-slate-400' : 'text-red-600') : 'text-slate-900'
         }`}
       >
-        {vacio ? 'No se ha podido leer' : valor}
+        {vacio
+          ? opcional
+            ? 'No se ha podido calcular automáticamente'
+            : 'No se ha podido leer'
+          : valor}
       </p>
 
       {aviso && <p className="text-xs text-amber-700 mt-1">{aviso}</p>}

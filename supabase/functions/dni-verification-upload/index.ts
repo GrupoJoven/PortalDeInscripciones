@@ -82,6 +82,16 @@ Deno.serve(async (req) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const ocrUrl = Deno.env.get("DNI_OCR_SERVICE_URL");
     const ocrSecret = Deno.env.get("DNI_OCR_SERVICE_SECRET");
+    // Opcional a propósito: si falta, se omite la inferencia del código
+    // postal (no bloquea el resto del flujo), a diferencia de los secretos
+    // de arriba, que si faltan impiden verificar nada.
+    const googleMapsApiKey = Deno.env.get("GOOGLE_MAPS_API_KEY");
+
+    if (!googleMapsApiKey) {
+      console.warn(
+        "GOOGLE_MAPS_API_KEY no está configurado: no se inferirá el código postal.",
+      );
+    }
 
     if (!supabaseUrl || !serviceRoleKey || !ocrUrl || !ocrSecret) {
       console.error(
@@ -153,6 +163,7 @@ Deno.serve(async (req) => {
         sessionId: session.id,
         ocrUrl,
         ocrSecret,
+        googleMapsApiKey,
         frontPath: session.front_path,
         backPath: session.back_path,
         minorWithoutDni: session.minor_without_dni,
@@ -230,6 +241,7 @@ Deno.serve(async (req) => {
       sessionId: session.id,
       ocrUrl,
       ocrSecret,
+      googleMapsApiKey,
       frontPath: frontPath!,
       backPath: backPath!,
       minorWithoutDni: session.minor_without_dni,
@@ -259,6 +271,7 @@ async function extraerYGuardar({
   sessionId,
   ocrUrl,
   ocrSecret,
+  googleMapsApiKey,
   frontPath,
   backPath,
   minorWithoutDni,
@@ -267,6 +280,7 @@ async function extraerYGuardar({
   sessionId: string;
   ocrUrl: string;
   ocrSecret: string;
+  googleMapsApiKey: string | undefined;
   frontPath: string;
   backPath: string;
   minorWithoutDni: boolean;
@@ -362,6 +376,31 @@ async function extraerYGuardar({
     });
   }
 
+  // El código postal no viene en el DNI: se infiere a partir del domicilio
+  // leído para poder comprobar si la familia vive en la zona parroquial
+  // (CP 46010). Es un dato best-effort: si la API falla o no encuentra la
+  // dirección, no se bloquea la verificación, solo se avisa de que habrá
+  // que rellenarlo a mano.
+  const domicilio = (extracted.domicilio ?? {}) as {
+    direccion?: string;
+    localidad?: string;
+  };
+
+  const codigoPostal = googleMapsApiKey
+    ? await inferirCodigoPostal(domicilio.direccion, domicilio.localidad, googleMapsApiKey)
+    : null;
+
+  extracted.codigo_postal = codigoPostal;
+  extracted.en_zona_parroquial = codigoPostal ? codigoPostal === "46010" : null;
+
+  if (!codigoPostal) {
+    const avisos = Array.isArray(extracted.avisos) ? [...extracted.avisos] : [];
+    avisos.push(
+      "No se ha podido inferir el código postal automáticamente. Tendrás que indicarlo a mano en el formulario.",
+    );
+    extracted.avisos = avisos;
+  }
+
   const { error: saveError } = await supabase
     .from("dni_verification_sessions")
     .update({ status: "extracted", extracted, extraction_error: null })
@@ -379,10 +418,88 @@ async function extraerYGuardar({
       nombre: extracted.nombre ?? null,
       numero: extracted.numero ?? null,
       domicilio_texto: extracted.domicilio_texto ?? null,
+      codigo_postal: extracted.codigo_postal ?? null,
+      en_zona_parroquial: extracted.en_zona_parroquial ?? null,
       numero_valido: extracted.numero_valido === true,
       avisos: Array.isArray(extracted.avisos) ? extracted.avisos : [],
     },
   });
+}
+
+/**
+ * Corta la dirección justo después del primer número suelto: en el formato
+ * español "TIPO_VIA NOMBRE_VIA Nº [PISO] [PUERTA]" el piso y la puerta
+ * vienen siempre después del número de portal y confunden a la API de
+ * geocodificación (p.ej. "C. ALFAHUIR 44 P14 O053" -> "C. ALFAHUIR 44").
+ *
+ * Limitación conocida y aceptada: una calle cuyo nombre incluya un número
+ * (p.ej. "Calle 9 de Octubre") se cortaría antes de tiempo. Es un caso raro
+ * frente al beneficio de quitar siempre el piso/puerta.
+ */
+function limpiarDireccionParaGeocodificar(direccion: string): string {
+  const match = direccion.match(/^(.*?\b\d+)\b/);
+  return (match ? match[1] : direccion).replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Llama a la API de Geocodificación de Google Maps para obtener el código
+ * postal de una dirección. Nunca lanza: cualquier fallo (red, sin
+ * resultados, sin código postal en la respuesta) se traduce en `null`.
+ */
+async function inferirCodigoPostal(
+  direccion: string | undefined,
+  localidad: string | undefined,
+  apiKey: string,
+): Promise<string | null> {
+  const direccionLimpia = direccion ? limpiarDireccionParaGeocodificar(direccion) : "";
+
+  if (!direccionLimpia) return null;
+
+  const partesDireccion = [direccionLimpia, localidad].filter(Boolean).join(", ");
+
+  const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+  url.searchParams.set("address", partesDireccion);
+  url.searchParams.set("components", "country:ES");
+  url.searchParams.set("key", apiKey);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+
+  try {
+    const response = await fetch(url.toString(), { signal: controller.signal });
+
+    if (!response.ok) {
+      console.error(`La API de Geocodificación ha devuelto ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+
+    if (data.status !== "OK" || !Array.isArray(data.results) || data.results.length === 0) {
+      if (data.status !== "ZERO_RESULTS") {
+        console.error("La API de Geocodificación no ha podido resolver la dirección:", data.status);
+      }
+      return null;
+    }
+
+    for (const result of data.results) {
+      const componentePostal = (result.address_components ?? []).find(
+        (componente: { types?: string[] }) =>
+          Array.isArray(componente.types) && componente.types.includes("postal_code"),
+      );
+
+      if (componentePostal?.short_name) {
+        return componentePostal.short_name as string;
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error("Error llamando a la API de Geocodificación:", error);
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**

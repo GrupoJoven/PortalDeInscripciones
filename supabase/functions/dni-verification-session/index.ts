@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
   }
 });
 
-/** Solo devolvemos los tres campos que interesan al formulario. */
+/** Solo devolvemos los campos que interesan al formulario. */
 function sanitizeExtracted(extracted: Record<string, unknown> | null) {
   if (!extracted) return null;
 
@@ -120,6 +120,8 @@ function sanitizeExtracted(extracted: Record<string, unknown> | null) {
     nombre: (extracted.nombre as string | null) ?? null,
     numero: (extracted.numero as string | null) ?? null,
     domicilio_texto: (extracted.domicilio_texto as string | null) ?? null,
+    codigo_postal: (extracted.codigo_postal as string | null) ?? null,
+    en_zona_parroquial: (extracted.en_zona_parroquial as boolean | null) ?? null,
     numero_valido: extracted.numero_valido === true,
     avisos: Array.isArray(extracted.avisos) ? extracted.avisos : [],
   };
