@@ -577,3 +577,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/dni-verification-status/deno.json"
 entrypoint = "./functions/dni-verification-status/index.ts"
+
+[functions.dni-verification-cleanup]
+enabled = true
+verify_jwt = false
+import_map = "./functions/dni-verification-cleanup/deno.json"
+entrypoint = "./functions/dni-verification-cleanup/index.ts"

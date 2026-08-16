@@ -346,6 +346,22 @@ async function extraerYGuardar({
     });
   }
 
+  // `documento_vigente` solo llega en `false` cuando el servicio de OCR ha
+  // podido leer la fecha de caducidad y ha comprobado que ya ha pasado. Si
+  // no se pudo leer la fecha, viene `null`/ausente y no se bloquea aquí:
+  // mejor dejar pasar un caso dudoso que rechazar un documento en vigor por
+  // un fallo de lectura de la fecha.
+  if (extracted.documento_vigente === false) {
+    await marcarFallo(supabase, sessionId, "El DNI ha caducado.");
+
+    return jsonResponse({
+      ok: true,
+      status: "failed",
+      message:
+        "El documento ha caducado. Usa un DNI en vigor para verificar la identidad.",
+    });
+  }
+
   const { error: saveError } = await supabase
     .from("dni_verification_sessions")
     .update({ status: "extracted", extracted, extraction_error: null })

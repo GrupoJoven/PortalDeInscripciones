@@ -85,8 +85,10 @@ git commit -m "Verificacion de DNI en formularios de acceso libre"
 git push
 ```
 
-**Por qué ahora:** Render (paso 4) necesita leer el código desde GitHub, así que
-tiene que estar subido antes.
+**Por qué ahora:** Vercel (el portal) despliega desde GitHub, así que tiene
+que estar subido antes. El servicio de OCR del paso 4 (Google Cloud Run) se
+construye a partir del código en tu ordenador, no necesita GitHub — pero
+subirlo de todas formas mantiene el repositorio como fuente de verdad.
 
 **Comprobación:**
 
@@ -132,67 +134,95 @@ Debe devolver: `0`, las dos columnas, y el bucket con `public = false`.
 
 ## Paso 4 — Publicar el servicio que lee los DNI
 
-Esta es la pieza que usa tu código de Python. Va en un servidor aparte porque
-necesita Tesseract, que ni Supabase ni Vercel traen instalado.
+Esta es la pieza que hace el OCR. Va en un servidor aparte porque ni las
+Edge Functions de Supabase (Deno) ni Vercel pueden correr PaddleOCR.
 
-Usaremos **Render**, que se maneja todo desde el navegador.
+> **Historial:** este paso usaba Render con un lector basado en Tesseract
+> (`dni-ocr-service/`). Se migró a **Google Cloud Run** con un lector nuevo
+> basado en PaddleOCR (`dni-ocr-cloudrun/`) porque el lector nuevo lee mucho
+> mejor el nombre y el domicilio en fotos reales, pero necesita más memoria
+> (~600 MB de pico) de la que da el plan gratuito de Render (512 MB). El
+> directorio `dni-ocr-service/` se deja tal cual, sin desplegar, por si hace
+> falta volver atrás: basta con repetir el paso 5 apuntando a su URL de
+> Render.
 
-1. Crea una cuenta en https://render.com (puedes entrar con GitHub).
-2. **New** → **Web Service**.
-3. Conecta el repositorio `GrupoJoven/PortalDeInscripciones`.
-4. Rellena así:
+### 4.1 Cuenta, proyecto y facturación de Google Cloud
 
-   | Campo          | Valor                          |
-   | -------------- | ------------------------------ |
-   | Name           | `dni-ocr`                      |
-   | Region         | **Frankfurt** (la más cercana a tu Supabase) |
-   | Branch         | `main`                         |
-   | Root Directory | `dni-ocr-service`              |
-   | Runtime        | **Docker**                     |
-   | Instance Type  | ver la nota de abajo           |
+Esto solo se puede hacer desde el navegador, con tu cuenta de Google:
 
-5. Baja hasta **Environment Variables** y añade una:
+1. Crea un **proyecto nuevo** en
+   https://console.cloud.google.com/projectcreate (independiente de
+   cualquier otro proyecto que ya tengas). Apunta el **ID del proyecto**
+   (no el nombre) — lo pide más abajo.
+2. Vincula una **cuenta de facturación** al proyecto, en
+   https://console.cloud.google.com/billing. Cloud Run exige facturación
+   activa aunque el uso se quede dentro de la capa gratuita (con el volumen
+   de un colegio, no debería generar cargos).
 
-   - Key: `DNI_OCR_SERVICE_SECRET`
-   - Value: una contraseña larga e inventada, de al menos 40 caracteres.
-     Sirve cualquier cosa aleatoria; **guárdala en un sitio seguro porque la
-     necesitas en el paso 5**.
+### 4.2 Instalar `gcloud` y autenticarse
 
-6. **Create Web Service**. El primer despliegue tarda unos 5-10 minutos
-   (está instalando Tesseract).
+```powershell
+scoop bucket add extras
+scoop install extras/gcloud
+gcloud auth login
+gcloud config set project <ID-DEL-PROYECTO>
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
+```
 
-### Sobre el plan gratuito
+`gcloud auth login` abre el navegador una vez. A partir de ahí, todo lo
+demás se puede hacer por línea de comandos.
 
-En el plan gratuito, Render apaga el servicio tras 15 minutos sin uso y tarda
-unos 50 segundos en despertar. La primera persona que verifique su DNI después
-de un rato de inactividad se quedará esperando casi un minuto, y puede llegar a
-fallar.
+### 4.3 Desplegar
 
-Además, la instancia gratuita comparte 0,1 de CPU, así que la lectura del
-documento tarda del orden de 15-30 segundos en lugar de 2-3.
+```powershell
+cd dni-ocr-cloudrun
+gcloud run deploy dni-ocr-cloudrun `
+  --source . `
+  --region europe-west1 `
+  --memory 1Gi `
+  --cpu 1 `
+  --cpu-boost `
+  --concurrency 1 `
+  --min-instances 0 `
+  --max-instances 3 `
+  --timeout 120 `
+  --allow-unauthenticated `
+  --set-env-vars DNI_OCR_SERVICE_SECRET=<contraseña larga e inventada>
+```
 
-- **Para probar**: el plan gratuito vale. Si la lectura falla por tardar
-  demasiado, en el móvil aparece **"Reintentar la lectura"**: reaprovecha las
-  fotos ya subidas y, con el contenedor ya despierto, suele funcionar.
-- **Para el periodo de inscripciones**: pásate al plan de pago más barato
-  (unos 7 $/mes), que no se duerme y da CPU completa. Puedes cambiarlo el día
-  antes de abrir las inscripciones y volver al gratuito después.
+Genera la contraseña con `openssl rand -hex 32` (o cualquier cosa aleatoria
+de 40+ caracteres). **Guárdala: la necesitas en el paso 5.**
 
-**Comprobación:** cuando Render diga "Live", copia la URL que te da (algo como
-`https://dni-ocr.onrender.com`) y ábrela en el navegador añadiendo `/health`:
+El primer despliegue tarda varios minutos (construye la imagen con Cloud
+Build). Al terminar, imprime algo como:
 
 ```
-https://dni-ocr.onrender.com/health
+Service URL: https://dni-ocr-cloudrun-XXXXXXXXXXXX.europe-west1.run.app
+```
+
+Copia esa URL: es lo que necesita el paso 5.
+
+`--allow-unauthenticated` es correcto y deliberado: la autenticación real la
+hace la propia aplicación comprobando `X-Service-Secret`, igual que hacía en
+Render — no hace falta autenticación a nivel de Google además de esa.
+
+`europe-west1` (Bélgica) por cercanía al proyecto de Supabase (Irlanda). 1
+GiB de memoria da margen sobre el pico medido (~600 MB); `min-instances=0`
+mantiene esto en la capa gratuita entre temporadas de inscripción, a cambio
+de un arranque en frío de ~20-30 s la primera vez tras un rato sin uso — la
+Edge Function ya espera hasta 130 s, así que entra de sobra.
+
+**Comprobación:**
+
+```
+https://<tu-url-de-cloud-run>/health
 ```
 
 Debe responder exactamente esto:
 
 ```json
-{"ok":true,"ocr_language":"spa","spanish":true,"configured":true}
+{"ok":true,"engine":"paddleocr-tiny","configured":true}
 ```
-
-Fíjate bien en que ponga **`"spanish":true`**. Si pone `false`, el paquete de
-español no se instaló y el OCR leerá bastante peor: avísame antes de seguir.
 
 ---
 
@@ -206,8 +236,14 @@ hablarle.
 
    | Nombre                   | Valor                                          |
    | ------------------------ | ---------------------------------------------- |
-   | `DNI_OCR_SERVICE_URL`    | La URL de Render, sin barra final. Ej: `https://dni-ocr.onrender.com` |
+   | `DNI_OCR_SERVICE_URL`    | La URL de Cloud Run, sin barra final. Ej: `https://dni-ocr-cloudrun-xxxxxxxxxxxx.europe-west1.run.app` |
    | `DNI_OCR_SERVICE_SECRET` | La misma contraseña larga del paso 4            |
+
+   O por línea de comandos, más rápido:
+   ```powershell
+   supabase secrets set DNI_OCR_SERVICE_URL=<tu-url-de-cloud-run> --project-ref pqycvrpdyebshkfaxzmi
+   supabase secrets set DNI_OCR_SERVICE_SECRET=<la-misma-contraseña-del-paso-4> --project-ref pqycvrpdyebshkfaxzmi
+   ```
 
 3. Comprueba en esa misma pantalla que ya existe `APP_BASE_URL` y que apunta a
    la dirección pública de tu portal (la de Vercel o tu dominio). Es la
@@ -351,21 +387,78 @@ el del adulto y no debe usarse como nombre del menor.
 
 ---
 
-## Paso 9 (opcional, recomendado) — Limpieza automática
+## Paso 9 (no lo saltes) — Borrado automático de las fotos
 
-Las sesiones caducan solas a los 30 minutos, pero las filas se quedan
-acumuladas en la tabla. Para borrarlas cada hora, ejecuta esto una vez en el
-editor SQL:
+**Esto no es opcional pese a lo que decía antes esta guía.** Las sesiones
+caducan solas a los 30 minutos, pero eso solo borra la fila de la tabla; las
+fotos del documento se quedan en el bucket `dni_uploads` para siempre si
+nadie las borra a propósito. La única vía que sí las borra
+(`dni-verification-confirm`) solo se dispara cuando el usuario **confirma**
+los datos leídos: cualquier verificación abandonada, fallida, o una simple
+prueba, deja sus dos fotos ahí de por vida pese al mensaje de "las fotos se
+han borrado".
+
+*(Si en algún momento ejecutaste una versión anterior de este paso que solo
+llamaba a `cleanup_dni_verification_sessions()` por SQL: esa función borra
+las filas de la tabla, pero una función SQL no puede borrar archivos de
+Storage —eso solo lo hace la API de Storage—, así que las fotos seguían
+acumulándose. Es justo lo que corrige este paso.)*
+
+### 9.1 Desplegar la función de limpieza
+
+```powershell
+supabase functions deploy dni-verification-cleanup
+```
+
+### 9.2 Darle un secreto
+
+En https://supabase.com/dashboard/project/pqycvrpdyebshkfaxzmi/settings/functions,
+añade un secreto más junto a los del paso 5:
+
+| Nombre               | Valor                                                    |
+| -------------------- | --------------------------------------------------------|
+| `DNI_CLEANUP_SECRET` | Otra contraseña larga e inventada (no la reutilices de las otras) |
+
+### 9.3 Programar que se ejecute sola
+
+Si ya tenías programado el `limpiar-sesiones-dni` de una versión anterior de
+esta guía, quítalo primero (en el editor SQL):
+
+```sql
+select cron.unschedule('limpiar-sesiones-dni');
+```
+
+Y programa la limpieza de verdad, cambiando `TU_SECRETO_AQUI` por el valor
+exacto que has puesto en `DNI_CLEANUP_SECRET`:
 
 ```sql
 create extension if not exists pg_cron;
+create extension if not exists pg_net;
 
 select cron.schedule(
-  'limpiar-sesiones-dni',
-  '0 * * * *',
-  $$ select public.cleanup_dni_verification_sessions(); $$
+  'limpiar-fotos-dni',
+  '*/15 * * * *',
+  $$
+  select net.http_post(
+    url := 'https://pqycvrpdyebshkfaxzmi.supabase.co/functions/v1/dni-verification-cleanup',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-cleanup-secret', 'TU_SECRETO_AQUI'
+    ),
+    body := '{}'::jsonb
+  );
+  $$
 );
 ```
+
+**Comprobación:** espera 15 minutos (o cambia momentáneamente el intervalo a
+`* * * * *` para probarlo ya, y vuelve a `*/15 * * * *` después) y mira los
+logs de la función en
+https://supabase.com/dashboard/project/pqycvrpdyebshkfaxzmi/functions —
+debe aparecer una ejecución con `fotos_encontradas` y `fotos_borradas`. Si
+tienes fotos de pruebas antiguas acumuladas en el bucket de antes de aplicar
+este paso, esta misma limpieza las recogerá en cuanto sus sesiones lleven más
+de 30 minutos caducadas (todas las de pruebas ya llevan mucho más).
 
 ---
 
@@ -375,18 +468,20 @@ select cron.schedule(
 | --- | --- | --- |
 | El QR lleva a una página en blanco o de error | `APP_BASE_URL` mal configurada | Paso 5, punto 3 |
 | El móvil dice "No se ha podido abrir la cámara" | Estás en `http://` o denegaste el permiso | Usa la web publicada (HTTPS) y acepta el permiso |
-| Se queda en "Leyendo el documento..." y falla | Render estaba dormido o va muy justo de CPU | Pulsa **"Reintentar la lectura"**: las fotos siguen guardadas y no hay que repetirlas. Si pasa siempre, plan de pago |
+| Se queda en "Leyendo el documento..." y falla | El contenedor de Cloud Run estaba en arranque en frío (`min-instances=0`) | Pulsa **"Reintentar la lectura"**: las fotos siguen guardadas y no hay que repetirlas. Si pasa siempre, sube `min-instances` a 1 |
 | Pide repetir la foto del reverso una y otra vez | Versión anterior: cualquier fallo del servidor se trataba como foto ilegible | Redespliega `dni-verification-upload` |
-| Falla la lectura y en los logs de Render no aparece ninguna petición `POST /extract` | La Edge Function no llegó a enviarla | Mira los logs de Supabase: registra la URL a la que llama y un diagnóstico de `/health` |
+| Falla la lectura y en los logs de Cloud Run no aparece ninguna petición `POST /extract` | La Edge Function no llegó a enviarla | Mira los logs de Supabase: registra la URL a la que llama y un diagnóstico de `/health` |
 | Lee el DNI pero el formulario sale vacío | Faltan las dos funciones modificadas del paso 6 | Redespliega `start-public-form-email-access` y `verify-public-form-email-token` |
-| Los datos leídos salen con errores raros | `"spanish":false` en `/health` | El paquete de español no se instaló; avísame |
+| `documento_vigente` sale `false` con un DNI que no ha caducado | Fecha de validez mal leída, u OCR confundido | Repite la foto del reverso; si persiste, revisa `fecha_validez` en la respuesta de `/extract` a mano |
 | El marco nunca se pone verde | Umbrales del comprobador de encuadre | Espera 6 s y usa **"Hacer la foto igualmente"**. Para diagnosticarlo, toca el mensaje de aviso: se despliegan los números que está midiendo |
 | "Este formulario requiere verificar el DNI... Vuelve a empezar" | La sesión caducó (30 min) | Vuelve a generar el QR |
+| Necesito volver al servicio anterior (Render/Tesseract) | El de Cloud Run da problemas | `supabase secrets set DNI_OCR_SERVICE_URL=<url-de-render> --project-ref pqycvrpdyebshkfaxzmi` con la URL del servicio de Render (si sigue desplegado) — no hace falta redesplegar nada más |
 
 Para ver qué está pasando por dentro:
 
 - Logs de las funciones: https://supabase.com/dashboard/project/pqycvrpdyebshkfaxzmi/logs/edge-functions
-- Logs del OCR: pestaña **Logs** de tu servicio en Render.
+- Logs del OCR: `gcloud run services logs read dni-ocr-cloudrun --region europe-west1`,
+  o la consola de Cloud Run → el servicio → pestaña **Logs**.
 
 ---
 
@@ -396,6 +491,14 @@ Para ver qué está pasando por dentro:
 
 A partir de aquí es documentación para entender cómo funciona por dentro. No
 hace falta para ponerlo en marcha.
+
+> **Nota:** las secciones "Cómo se lee cada dato" en adelante describen el
+> lector **original basado en Tesseract** (`dni-ocr-service/`), que ya no es
+> el que está desplegado por defecto (ver el aviso del Paso 4). Se dejan tal
+> cual porque `dni-ocr-service/` sigue en el repositorio como posible vuelta
+> atrás, y porque documentan decisiones (nitidez, lectura por posición,
+> etiquetas bilingües...) que costó bastante averiguar. Para el lector nuevo
+> (`dni-ocr-cloudrun/`, PaddleOCR), consulta `dni-ocr-cloudrun/README.md`.
 
 ## Flujo completo
 
@@ -459,6 +562,11 @@ nombre y domicilio ya rellenados
   se pueda repetir una sola cara sin rehacer las dos fotos. Después solo quedan
   nombre, número y domicilio, y como mucho 24 h (el margen para completar la
   verificación por correo).
+- **Y si nunca se confirma, también se borran.** Una sesión abandonada, fallida
+  o de prueba caduca a los 30 minutos; la limpieza periódica (paso 9,
+  `dni-verification-cleanup`) borra la fila y, con ella, las fotos que hubiera
+  en el bucket. Sin este paso, el mensaje de "las fotos se han borrado" solo
+  era cierto para quien llegaba a confirmar.
 - **Si el menor no tiene DNI**, el nombre leído es el del progenitor: se guarda
   pero nunca se devuelve al escritorio ni se prerrellena en el formulario. Solo
   se usan el DNI y el domicilio.

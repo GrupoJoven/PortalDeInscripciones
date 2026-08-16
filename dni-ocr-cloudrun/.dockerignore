@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+.env.*
+*.jpg
+*.jpeg
+*.png
+README.md
+test_*.py
