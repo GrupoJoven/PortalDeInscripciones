@@ -240,7 +240,7 @@ class DNIReader:
     }
 
     BACK_LABELS = {
-        "address": ["DOMICILIO", "DOMICLIO", "DOMICILI","DOMICIU","DOMICII", "DOMICI", "DOMICLII", "ADDRESS", "ADRECA", "ENDEREZO"],
+        "address": ["DOMICILIO", "DOMICLIO", "DOMICILI", "DOMICIU", "DOMICII", "DOMICI", "DOMICLII", "ADDRESS", "ADRECA", "ENDEREZO"],
         "city": ["LOCALIDAD", "MUNICIPIO", "CITY", "LOCALITAT"],
         "province": ["PROVINCIA", "PROVINCE", "PROVINCIA / PROVINCE"],
         "birth_place": ["LUGAR DE NACIMIENTO", "PLACE OF BIRTH", "LLOC DE NAIXEMENT"],
@@ -350,6 +350,10 @@ class DNIReader:
             front_page.tokens
         )
 
+        # Se conserva como pista para elegir el parser del reverso sin
+        # alterar el camino habitual de los DNI actuales.
+        legacy_front = self._looks_like_legacy_front(front_page.tokens)
+
         front_lines = self._text_lines(front_page.tokens)
 
         # Ya hemos extraído todo lo necesario del frontal.
@@ -388,7 +392,8 @@ class DNIReader:
         )
 
         back_fields = self._extract_back_fields(
-            back_page.tokens
+            back_page.tokens,
+            legacy_hint=True if legacy_front else None,
         )
 
         mrz = self._extract_mrz(
@@ -931,8 +936,8 @@ class DNIReader:
         support = self._find_support_number(tokens)
         can = self._find_can(tokens)
 
-        # Para nombres/apellidos es mucho más robusto seguir el orden de líneas
-        # del documento que elegir simplemente el token geométricamente más cercano.
+        # Mantener primero el extractor actual. Solo si deja huecos se activa
+        # el fallback para los diseños anteriores del DNI.
         surname = self._person_after_label(tokens, self.FRONT_LABELS["surname"], max_lines=2)
         name = self._person_after_label(tokens, self.FRONT_LABELS["name"], max_lines=1)
 
@@ -956,6 +961,17 @@ class DNIReader:
         if nationality:
             nationality = alnum_compact(nationality)[:3]
 
+        # ------------------------------------------------------------------
+        # Fallback legacy: NO sustituye valores que el extractor actual ya
+        # haya encontrado. Esto evita alterar el comportamiento de DNI 4.0.
+        # ------------------------------------------------------------------
+        if self._looks_like_legacy_front(tokens):
+            legacy = self._extract_legacy_front_fields(tokens)
+            surname = surname or legacy.get("apellidos")
+            name = name or legacy.get("nombre")
+            birth = birth or legacy.get("fecha_nacimiento")
+            expiry = expiry or legacy.get("fecha_validez")
+
         return {
             "dni": dni,
             "dni_ocr_score": dni_score,
@@ -969,6 +985,109 @@ class DNIReader:
             "fecha_emision": issue,
             "sexo": norm(sex) if sex else None,
             "nacionalidad": nationality,
+        }
+
+    @staticmethod
+    def _fuzzy_has_word(text: str, targets: Sequence[str], threshold: float = 0.72) -> bool:
+        """Tolerancia pequeña a errores OCR en palabras de etiqueta."""
+        from difflib import SequenceMatcher
+
+        words = re.findall(r"[A-Z]+", norm(text))
+        targets_n = [norm(t) for t in targets]
+        for word in words:
+            for target in targets_n:
+                # Para palabras cortas no hacemos fuzzy: produciría demasiados
+                # falsos positivos.
+                if len(target) < 4:
+                    if word == target:
+                        return True
+                    continue
+                if word == target or SequenceMatcher(None, word, target).ratio() >= threshold:
+                    return True
+        return False
+
+    def _legacy_front_label_kind(self, text: str) -> Optional[str]:
+        n = norm(text)
+        has_surname_word = (
+            "APELL" in n
+            or "COGN" in n
+            or "COG" in n
+        )
+
+        if has_surname_word and self._fuzzy_has_word(n, ["SEGUNDO", "SEGON"], 0.68):
+            return "surname2"
+        if has_surname_word and self._fuzzy_has_word(n, ["PRIMER"], 0.68):
+            return "surname1"
+        if self._fuzzy_has_word(n, ["NOMBRE"], 0.72) or re.search(r"(?:^|\W)NOM(?:$|\W)", n):
+            return "name"
+        if ("NACI" in n or "NAIX" in n) and ("FECHA" in n or "DATA" in n):
+            return "birth"
+        if "VALID" in n:
+            return "expiry"
+        return None
+
+    def _looks_like_legacy_front(self, tokens: Sequence[OCRToken]) -> bool:
+        kinds = {
+            self._legacy_front_label_kind(line)
+            for line in self._text_lines(tokens)
+        }
+        # La pareja PRIMER/SEGUNDO APELLIDO es un marcador muy específico
+        # de los diseños previos y evita activar este fallback en DNI actuales.
+        return "surname1" in kinds and "surname2" in kinds
+
+    def _extract_legacy_front_fields(self, tokens: Sequence[OCRToken]) -> Dict[str, Optional[str]]:
+        lines = self._text_lines(tokens)
+        kinds = [self._legacy_front_label_kind(line) for line in lines]
+
+        def find_kind(kind: str) -> Optional[int]:
+            return next((i for i, k in enumerate(kinds) if k == kind), None)
+
+        def next_person_value(idx: Optional[int], max_lookahead: int = 3) -> Optional[str]:
+            if idx is None:
+                return None
+            for j in range(idx + 1, min(len(lines), idx + 1 + max_lookahead)):
+                txt = lines[j].strip()
+                ntxt = norm(txt)
+                if not txt:
+                    continue
+                if kinds[j] is not None:
+                    continue
+                if any(x in ntxt for x in ("SEXO", "NACIONAL", "IDESP", "DNI NUM", "DNI NÚM")):
+                    break
+                if self._dates_in_text(txt) or re.search(r"\d", txt):
+                    break
+                cleaned = self._clean_person_name(txt)
+                if self._is_plausible_person_name(cleaned):
+                    return cleaned
+            return None
+
+        def next_date_value(idx: Optional[int], max_lookahead: int = 3) -> Optional[str]:
+            if idx is None:
+                return None
+            # Primero, por si etiqueta y fecha vienen en el mismo bloque/línea.
+            for d in self._dates_in_text(lines[idx]):
+                return d
+            for j in range(idx + 1, min(len(lines), idx + 1 + max_lookahead)):
+                dates = self._dates_in_text(lines[j])
+                if dates:
+                    return dates[0]
+            return None
+
+        s1 = next_person_value(find_kind("surname1"))
+        s2 = next_person_value(find_kind("surname2"))
+        surname = " ".join(x for x in (s1, s2) if x) or None
+
+        name = next_person_value(find_kind("name"))
+        # Evitar que una lectura pegada como MARIAGLORIA empeore un nombre
+        # correctamente espaciado que después pueda venir de la MRZ.
+        if name and " " not in name and len(name) > 10:
+            name = None
+
+        return {
+            "nombre": name,
+            "apellidos": surname,
+            "fecha_nacimiento": next_date_value(find_kind("birth")),
+            "fecha_validez": next_date_value(find_kind("expiry")),
         }
 
     def _find_dni(self, tokens: Sequence[OCRToken]) -> Tuple[Optional[str], float]:
@@ -1022,9 +1141,13 @@ class DNIReader:
             if len(digits) == 6:
                 return digits
 
-        # En DNI recientes PaddleOCR puede leer perfectamente el CAN pero perder
-        # la etiqueta. Como fallback aceptamos un token aislado de 6 cifras que
-        # no tenga aspecto de fecha.
+        # Los DNI anteriores pueden llevar números de soporte con seis cifras
+        # (p.ej. ASE184626). Si detectamos el layout legacy y NO existe una
+        # etiqueta CAN explícita, no inventamos un CAN a partir de esas cifras.
+        if self._looks_like_legacy_front(tokens):
+            return None
+
+        # Mantener intacto el fallback que ya funcionaba con DNI recientes.
         candidates: List[Tuple[float, str]] = []
         for t in tokens:
             digits = re.sub(r"\D", "", t.text)
@@ -1167,12 +1290,47 @@ class DNIReader:
     # Extracción visual del reverso
     # -------------------------------------------------------------------------
 
-    def _extract_back_fields(self, tokens: Sequence[OCRToken]) -> Dict[str, Any]:
+    def _extract_back_fields(
+        self,
+        tokens: Sequence[OCRToken],
+        legacy_hint: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        # 1) Mantener intacta la extracción que ya funciona con DNI actuales.
         address, city_fallback, province_fallback = self._extract_address_city_province(tokens)
-        city = self._value_near_label(tokens, self.BACK_LABELS["city"], reject=self._looks_like_label) or city_fallback
-        province = self._value_near_label(tokens, self.BACK_LABELS["province"], reject=self._looks_like_label) or province_fallback
-        birth_place = self._multiline_after_label(tokens, self.BACK_LABELS["birth_place"], max_lines=2)
+        city = self._value_near_label(
+            tokens, self.BACK_LABELS["city"], reject=self._looks_like_label
+        ) or city_fallback
+        province = self._value_near_label(
+            tokens, self.BACK_LABELS["province"], reject=self._looks_like_label
+        ) or province_fallback
+        birth_place = self._multiline_after_label(
+            tokens, self.BACK_LABELS["birth_place"], max_lines=2
+        )
         parents = self._extract_parents(tokens)
+
+        # 2) Parser específico del reverso antiguo.
+        # IMPORTANTE: la detección se hace con el propio reverso, no depende
+        # de que el frontal haya sido clasificado correctamente como legacy.
+        #
+        # Estructura esperada:
+        #   DOMICILIO / DOMICILI
+        #   <dirección>
+        #   LUGAR DE DOMICILIO / LLOC DE DOMICILI
+        #   <localidad>
+        #   PROVINCIA/PAÍS / PROVÍNCIA-PAÍS
+        #   <provincia> [posible código EQUIPO pegado]
+        legacy = self._extract_legacy_back_fields(tokens)
+        use_legacy = bool(legacy.pop("_detected", False))
+
+        if use_legacy:
+            # En un layout antiguo, estos valores tienen prioridad sobre los
+            # obtenidos por proximidad, porque las propias etiquetas pueden
+            # confundirse con el valor de localidad/provincia.
+            address = legacy.get("domicilio") or address
+            city = legacy.get("localidad") or city
+            province = legacy.get("provincia") or province
+            birth_place = legacy.get("lugar_nacimiento") or birth_place
+            parents = legacy.get("padres") or parents
 
         return {
             "domicilio": self._clean_free_text(address),
@@ -1192,7 +1350,7 @@ class DNIReader:
         address_aliases = [
             "DOMICILIO",
             "DOMICILI",
-            "DOMICIL"
+            "DOMICIL",
             "ADDRESS",
             "ADRECA",
             "ENDEREZO",
@@ -1278,16 +1436,122 @@ class DNIReader:
             return address, city, province
 
         return None, None, None
+
+    @staticmethod
+    def _legacy_back_label_kind(text: str) -> Optional[str]:
+        # norm() ya elimina acentos y unifica a mayúsculas. Esto hace que
+        # PROVÍNCIA/PAÍS, PROVINCIA/PAIS, PROVINCIAPAIS, etc. converjan.
+        n = norm(text)
+        compact = re.sub(r"[^A-Z0-9]", "", n)
+
+        # Orden importante: LUGAR DE DOMICILIO contiene DOMICILIO, por lo que
+        # hay que clasificarlo antes que la etiqueta genérica DOMICILIO.
+        if (("LUGAR" in n) or ("LLOC" in n)) and (("NACI" in n) or ("NAIX" in n)):
+            return "birth_place"
+
+        if (("LUGAR" in n) or ("LLOC" in n)) and "DOMICIL" in n:
+            return "city"
+
+        # Tolerar HIJO/A, HIJOIA, HIJA, FILL/A, FILLIA, etc.
+        if (("HIJ" in n) or ("FILL" in n)) and "DE" in n:
+            return "parents"
+
+        # PROVINCIA/PAÍS puede venir muy deformado: PROVINCIAIPAIS,
+        # PROVINCIAPAIS, PROVÍNCIA-PAIS, PROVINCIA-PA...
+        if "PROVINC" in compact and ("PAIS" in compact or "PROVINCIAPA" in compact):
+            return "province"
+
+        if "DOMICIL" in n:
+            return "address"
+
+        return None
+
+    def _looks_like_legacy_back(self, tokens: Sequence[OCRToken]) -> bool:
+        lines = self._text_lines(tokens)
+        kinds = [self._legacy_back_label_kind(line) for line in lines]
+
+        # El marcador más específico es LUGAR/LLOC DE DOMICILIO. Como segundo
+        # criterio aceptamos DOMICILIO + PROVINCIA/PAÍS en el mismo reverso.
+        return (
+            "city" in kinds
+            or ("address" in kinds and "province" in kinds)
+        )
+
+    def _extract_legacy_back_fields(self, tokens: Sequence[OCRToken]) -> Dict[str, Any]:
+        lines = self._text_lines(tokens)
+        kinds = [self._legacy_back_label_kind(line) for line in lines]
+        detected = (
+            "city" in kinds
+            or ("address" in kinds and "province" in kinds)
+        )
+
+        def find_kind(kind: str, start: int = 0) -> Optional[int]:
+            return next((i for i in range(start, len(lines)) if kinds[i] == kind), None)
+
+        def next_value(idx: Optional[int], max_lookahead: int = 4) -> Optional[str]:
+            if idx is None:
+                return None
+
+            for j in range(idx + 1, min(len(lines), idx + 1 + max_lookahead)):
+                txt = lines[j].strip()
+                if not txt:
+                    continue
+                if self._looks_like_mrz(txt):
+                    break
+
+                # Otra etiqueta: se salta; nunca debe convertirse en localidad
+                # o provincia. Este es exactamente el fallo de la salida actual.
+                if kinds[j] is not None:
+                    continue
+                if self._looks_like_label(txt):
+                    continue
+
+                return txt
+
+            return None
+
+        birth_idx = find_kind("birth_place")
+        parents_idx = find_kind("parents", (birth_idx + 1) if birth_idx is not None else 0)
+        address_idx = find_kind("address", (parents_idx + 1) if parents_idx is not None else 0)
+        city_idx = find_kind("city", (address_idx + 1) if address_idx is not None else 0)
+        province_idx = find_kind("province", (city_idx + 1) if city_idx is not None else 0)
+
+        birth_place = next_value(birth_idx)
+        parents = next_value(parents_idx)
+        address = next_value(address_idx)
+        city = next_value(city_idx)
+        province = next_value(province_idx)
+
+        if province:
+            # En este modelo el código EQUIPO puede quedar unido al valor:
+            #     VALENCIA 46745S6D1
+            # Quitamos únicamente un sufijo alfanumérico largo que contenga
+            # letras y cifras; no tocamos nombres normales de provincia.
+            p = norm(province)
+            m = re.match(r"^(.*?)(?:\s+)([A-Z0-9]{8,12})$", p)
+            if m and re.search(r"[A-Z]", m.group(2)) and re.search(r"\d", m.group(2)):
+                p = m.group(1).strip()
+            province = p or None
+
+        return {
+            "_detected": detected,
+            "lugar_nacimiento": birth_place,
+            "padres": parents,
+            "domicilio": address,
+            "localidad": city,
+            "provincia": province,
+        }
+
     def _extract_parents(self, tokens: Sequence[OCRToken]) -> Optional[str]:
         parents = self._multiline_after_label(tokens, self.BACK_LABELS["parents"], max_lines=1)
         if parents:
             return parents
 
-        # Fallback para OCR degradado de "HIJO/A DE" (p.ej. "HI E DE").
+        # Fallback tolerante a OCR degradado de HIJO/A DE / FILL/A DE.
         grouped = self._group_lines(tokens)
         for idx, line in enumerate(grouped[:-1]):
             txt = norm(" ".join(t.text for t in line))
-            if len(txt) <= 20 and "HI" in txt and "DE" in txt:
+            if (("HIJ" in txt) or ("FILL" in txt)) and "DE" in txt:
                 candidate = " ".join(t.text for t in grouped[idx + 1]).strip()
                 if candidate and not self._looks_like_mrz(candidate):
                     return candidate
