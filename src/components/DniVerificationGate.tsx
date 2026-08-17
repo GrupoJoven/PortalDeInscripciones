@@ -28,6 +28,17 @@ const functionsUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 
 const INTERVALO_SONDEO_MS = 2500;
 
+/**
+ * Marca la URL de captura para que sepa que se abre en una pestaña nueva del
+ * mismo dispositivo: así, al terminar, no invita a "volver al ordenador"
+ * (no lo hay) y esta pestaña, que sigue sondeando, puede continuar sola.
+ */
+const withSameDeviceFlag = (url: string) => {
+  const [base, hash] = url.split('#');
+  const separador = base.includes('?') ? '&' : '?';
+  return `${base}${separador}same_device=1${hash ? `#${hash}` : ''}`;
+};
+
 const postFunction = async <T,>(name: string, body: unknown): Promise<T> => {
   const response = await fetch(`${functionsUrl}/${name}`, {
     method: 'POST',
@@ -319,11 +330,18 @@ export default function DniVerificationGate({
               </div>
 
               <a
-                href={mobileUrl}
+                href={withSameDeviceFlag(mobileUrl)}
+                target="_blank"
+                rel="noopener noreferrer"
                 className="text-sm font-semibold text-indigo-600 hover:text-indigo-700 underline break-all"
               >
                 Abre la verificación en este mismo dispositivo
               </a>
+
+              <p className="text-xs text-slate-500 mt-2">
+                Se abrirá en una pestaña nueva. No cierres esta: en cuanto termines, aquí
+                continuará solo el proceso de inscripción.
+              </p>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-3">

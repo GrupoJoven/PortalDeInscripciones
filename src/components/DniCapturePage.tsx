@@ -64,8 +64,17 @@ const readTokenFromHash = () => {
   return (params.get('t') ?? '').trim();
 };
 
+/**
+ * Si esta página se abrió desde el enlace "mismo dispositivo" (en una
+ * pestaña nueva), la pestaña original sigue sondeando y continuará sola: no
+ * tiene sentido invitar a "volver al ordenador".
+ */
+const readSameDeviceFlag = () =>
+  new URLSearchParams(window.location.search).get('same_device') === '1';
+
 export default function DniCapturePage() {
   const [token] = useState(readTokenFromHash);
+  const [sameDevice] = useState(readSameDeviceFlag);
   const [step, setStep] = useState<Step>('loading');
   const [formTitle, setFormTitle] = useState('');
   const [minorWithoutDni, setMinorWithoutDni] = useState(false);
@@ -663,8 +672,9 @@ export default function DniCapturePage() {
             </h2>
 
             <p className="text-slate-600 mb-6">
-              Ya puedes volver al ordenador: allí continuará el proceso de inscripción con
-              los datos ya rellenados.
+              {sameDevice
+                ? 'Ya puedes volver a la otra pestaña que tenías abierta: allí continuará el proceso de inscripción con los datos ya rellenados.'
+                : 'Ya puedes volver al ordenador: allí continuará el proceso de inscripción con los datos ya rellenados.'}
             </p>
 
             <p className="text-xs text-slate-500">
