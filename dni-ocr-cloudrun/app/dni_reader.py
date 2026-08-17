@@ -270,8 +270,8 @@ class DNIReader:
         model_dir = Path(__file__).resolve().parent / "models"
 
         doc_orientation_dir = model_dir / "PP-LCNet_x1_0_doc_ori"
-        detection_dir = model_dir / "PP-OCRv6_tiny_det"
-        recognition_dir = model_dir / "PP-OCRv6_tiny_rec"
+        detection_dir = model_dir / "PP-OCRv6_small_det"
+        recognition_dir = model_dir / "PP-OCRv6_small_rec"
         for ruta in (
             doc_orientation_dir,
             detection_dir,
@@ -301,8 +301,8 @@ class DNIReader:
             "text_recognition_model_dir": str(recognition_dir),
 
             # Modelos ligeros
-            "text_detection_model_name": "PP-OCRv6_tiny_det",
-            "text_recognition_model_name": "PP-OCRv6_tiny_rec",
+            "text_detection_model_name": "PP-OCRv6_small_det",
+            "text_recognition_model_name": "PP-OCRv6_small_rec",
 
             "enable_mkldnn": False,
         }
@@ -1695,7 +1695,23 @@ class DNIReader:
                 w for w in fragment.strip().split(" ")
                 if w and not re.search(r"\d", w) and not any(c.islower() for c in w)
             ]
-            cleaned_fragments.append(" ".join(words).strip())
+
+            # Si el ruido quitado ocupaba el sitio de la "/" bilingüe (p.ej.
+            # "VALENCIA esorst VALÈNCIA" -> "VALENCIA VALÈNCIA" al filtrar
+            # "esorst"), reconstruir la barra entre las dos formas del mismo
+            # nombre en vez de dejarlas pegadas solo por un espacio.
+            merged: List[str] = []
+            for w in words:
+                if (
+                    merged
+                    and merged[-1] != w
+                    and strip_accents(merged[-1]).upper() == strip_accents(w).upper()
+                ):
+                    merged[-1] = f"{merged[-1]}/{w}"
+                else:
+                    merged.append(w)
+
+            cleaned_fragments.append(" ".join(merged).strip())
 
         result = "".join(cleaned_fragments)
         result = re.sub(r"/{2,}", "/", result)

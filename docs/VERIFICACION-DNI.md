@@ -206,11 +206,14 @@ Copia esa URL: es lo que necesita el paso 5.
 hace la propia aplicación comprobando `X-Service-Secret`, igual que hacía en
 Render — no hace falta autenticación a nivel de Google además de esa.
 
-`europe-west1` (Bélgica) por cercanía al proyecto de Supabase (Irlanda). 1
-GiB de memoria da margen sobre el pico medido (~600 MB); `min-instances=0`
-mantiene esto en la capa gratuita entre temporadas de inscripción, a cambio
-de un arranque en frío de ~20-30 s la primera vez tras un rato sin uso — la
-Edge Function ya espera hasta 130 s, así que entra de sobra.
+`europe-west1` (Bélgica) por cercanía al proyecto de Supabase (Irlanda). El 1
+GiB de memoria daba margen sobre el pico medido (~600 MB) con los modelos
+"tiny"; con los modelos "small" (más pesados) conviene volver a comprobar el
+pico real tras desplegar y subir `--memory` si Cloud Run muestra reinicios
+por falta de memoria. `min-instances=0` mantiene esto en la capa gratuita
+entre temporadas de inscripción, a cambio de un arranque en frío de ~20-30 s
+la primera vez tras un rato sin uso — la Edge Function ya espera hasta 130 s,
+así que entra de sobra.
 
 **Comprobación:**
 
@@ -221,7 +224,7 @@ https://<tu-url-de-cloud-run>/health
 Debe responder exactamente esto:
 
 ```json
-{"ok":true,"engine":"paddleocr-tiny","configured":true}
+{"ok":true,"engine":"paddleocr-small","configured":true}
 ```
 
 ---

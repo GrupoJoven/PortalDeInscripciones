@@ -158,8 +158,8 @@ cero): `docs/VERIFICACION-DNI.md`, Paso 4.
 
 Prototipo ya validado por su autor sobre fotos reales antes de integrarlo
 aquí — este servicio no reescribe su lógica de OCR, solo la envuelve en
-HTTP. Usa modelos "tiny" de PaddleOCR (13 MB en total, bajo `app/models/`),
-mucho más ligeros que los modelos por defecto de PaddleOCR, y hace su propia
+HTTP. Usa modelos "small" de PaddleOCR (~37 MB en total, bajo `app/models/`),
+más ligeros que los modelos por defecto de PaddleOCR, y hace su propia
 corrección de perspectiva y de orientación 0°/90°/180°/270° (con el
 clasificador `PP-LCNet_x1_0_doc_ori`, no con heurísticas escritas a mano).
 

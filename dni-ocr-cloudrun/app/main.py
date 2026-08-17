@@ -173,7 +173,7 @@ def _decodificar_base64(valor: str, campo: str) -> bytes:
 def health() -> dict:
     return {
         "ok": True,
-        "engine": "paddleocr-tiny",
+        "engine": "paddleocr-small",
         "configured": bool(SERVICE_SECRET),
         "model_ready": reader_load_finished.is_set() and reader is not None,
     }
