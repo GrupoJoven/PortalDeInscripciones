@@ -1673,9 +1673,11 @@ class DNIReader:
     @staticmethod
     def _clean_place_text(text: Optional[str]) -> Optional[str]:
         """Limpia localidad/provincia: descarta restos de OCR con dígitos
-        (p.ej. un código postal mal leído como "82crN"), sin tocar el
-        nombre bilingüe (p.ej. "VALENCIA/VALÈNCIA" se mantiene tal cual,
-        con su "/" y ambos idiomas).
+        (p.ej. un código postal mal leído como "82crN") o en minúsculas
+        (p.ej. "esorst", ruido de microtexto de fondo: LOCALIDAD/PROVINCIA
+        siempre van impresas en mayúsculas en el DNI), sin tocar el nombre
+        bilingüe (p.ej. "VALENCIA/VALÈNCIA" se mantiene tal cual, con su
+        "/" y ambos idiomas).
         """
         if not text:
             return None
@@ -1689,7 +1691,10 @@ class DNIReader:
             if fragment == "/":
                 cleaned_fragments.append(fragment)
                 continue
-            words = [w for w in fragment.strip().split(" ") if w and not re.search(r"\d", w)]
+            words = [
+                w for w in fragment.strip().split(" ")
+                if w and not re.search(r"\d", w) and not any(c.islower() for c in w)
+            ]
             cleaned_fragments.append(" ".join(words).strip())
 
         result = "".join(cleaned_fragments)

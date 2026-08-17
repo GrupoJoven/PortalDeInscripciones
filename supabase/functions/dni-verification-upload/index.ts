@@ -396,7 +396,7 @@ async function extraerYGuardar({
   if (!codigoPostal) {
     const avisos = Array.isArray(extracted.avisos) ? [...extracted.avisos] : [];
     avisos.push(
-      "No se ha podido inferir el código postal automáticamente. Tendrás que indicarlo a mano en el formulario.",
+      "No hemos podido establecer su código postal a partir de la dirección leída. Su inscripción será revisada manualmente para establecer si pertenece a la zona parroquial.",
     );
     extracted.avisos = avisos;
   }
