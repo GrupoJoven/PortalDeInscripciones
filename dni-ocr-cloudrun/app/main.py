@@ -33,13 +33,18 @@ from .mapping import mapear_respuesta  # noqa: E402
 SERVICE_SECRET = os.environ.get("DNI_OCR_SERVICE_SECRET", "")
 MAX_BYTES = int(os.environ.get("DNI_OCR_MAX_BYTES", 8 * 1024 * 1024))
 
-# El lector se crea UNA SOLA VEZ, al arrancar el proceso (no de forma
-# perezosa en la primera petición): si el modelo no cargara bien, mejor que
-# se vea en los logs de arranque del contenedor que en la petición de un
-# usuario real.
-reader = DNIReader(device="cpu")
-
-logger.info("DNIReader inicializado.")
+# El lector se crea UNA SOLA VEZ, en un hilo de fondo lanzado al arrancar el
+# proceso. NO se crea de forma síncrona aquí: cargar los modelos de
+# PaddleOCR puede tardar más de lo que Cloud Run espera (tope duro de 240 s)
+# a que el contenedor abra el puerto, y si esa carga bloquea el arranque,
+# Cloud Run mata el contenedor antes de que Uvicorn llegue a escuchar.
+# Dejando que Uvicorn abra el puerto de inmediato y el modelo cargue en
+# paralelo, el arranque del contenedor nunca depende de cuánto tarde
+# PaddleOCR; quien espera es, como mucho, la primera petición real a
+# `/extract` (ver más abajo).
+reader: DNIReader | None = None
+reader_error: str | None = None
+reader_load_finished = threading.Event()
 
 # El predictor de PaddleOCR no está documentado como seguro para llamadas
 # concurrentes desde varios hilos sobre la misma instancia. Un candado
@@ -48,6 +53,21 @@ logger.info("DNIReader inicializado.")
 # la práctica el candado casi nunca compite con nadie: es una red de
 # seguridad, no el mecanismo principal.
 reader_lock = threading.Lock()
+
+
+def _cargar_reader() -> None:
+    global reader, reader_error
+    try:
+        reader = DNIReader(device="cpu")
+        logger.info("DNIReader inicializado.")
+    except Exception as error:  # noqa: BLE001 - se registra y se expone en /health y /extract
+        logger.exception("No se pudo inicializar DNIReader")
+        reader_error = str(error)
+    finally:
+        reader_load_finished.set()
+
+
+threading.Thread(target=_cargar_reader, name="dni-reader-loader", daemon=True).start()
 
 # Solo hace falta un hilo: la concurrencia real la da Cloud Run arrancando
 # más instancias, no hilos dentro de esta.
@@ -155,6 +175,7 @@ def health() -> dict:
         "ok": True,
         "engine": "paddleocr-tiny",
         "configured": bool(SERVICE_SECRET),
+        "model_ready": reader_load_finished.is_set() and reader is not None,
     }
 
 
@@ -180,6 +201,15 @@ async def extract(
     )
 
     def trabajo() -> dict:
+        # Si esta es la primera petición tras un arranque en frío, el modelo
+        # puede seguir cargándose en segundo plano (ver _cargar_reader). Se
+        # espera aquí, dentro del hilo del executor, para no bloquear el
+        # bucle de eventos de FastAPI.
+        if not reader_load_finished.wait(timeout=180):
+            raise TimeoutError("El modelo de OCR no ha terminado de cargar a tiempo.")
+        if reader is None:
+            raise RuntimeError(reader_error or "El modelo de OCR no se pudo inicializar.")
+
         # `DNIReader.leer_dni` pide rutas de fichero, no bytes en memoria.
         # Se escriben a un directorio temporal -en Cloud Run, `/tmp` es
         # tmpfs (RAM), no disco real- y se borran solos al salir del `with`.
@@ -205,6 +235,10 @@ async def extract(
         resultado = await bucle.run_in_executor(executor, trabajo)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+    except TimeoutError as error:
+        raise HTTPException(status_code=503, detail="model_loading") from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail="model_unavailable") from error
     except MemoryError:
         logger.error("Sin memoria procesando el documento")
         raise HTTPException(status_code=507, detail="out_of_memory")

@@ -40,9 +40,9 @@ export default function VerifyPublicFormEmailPage() {
         }
 
         setStatus('success');
-        setMessage('Correo verificado correctamente. Redirigiendo al formulario...');
+        setMessage('Correo verificado correctamente. Hemos abierto el formulario en una nueva pestaña.');
 
-        window.location.href = result.access_url;
+        window.open(result.access_url, '_blank', 'noopener,noreferrer');
       } catch (error) {
         console.error(error);
         setStatus('error');
