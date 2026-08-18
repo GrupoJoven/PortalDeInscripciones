@@ -20,6 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 logging.basicConfig(level=logging.INFO)
@@ -89,6 +91,15 @@ class SolicitudExtraccion(BaseModel):
     back_url: str | None = Field(default=None, description="Enlace firmado del reverso")
     front_b64: str | None = Field(default=None, description="Anverso en base64")
     back_b64: str | None = Field(default=None, description="Reverso en base64")
+
+    # Con `debug: true` se devuelve el diccionario completo que produce
+    # `DNIReader.leer_dni()` (documento/titular/fechas/domicilio/mrz/
+    # validacion/fuentes/procesado, incluidas las líneas de OCR crudas),
+    # sin pasar por `mapear_respuesta()` ni por `RespuestaExtraccion`. Sirve
+    # para depurar qué ha leído *este* servicio desplegado exactamente
+    # -engine, modelos y código en producción-, en vez de fiarse de una
+    # copia local que puede no ser la misma versión.
+    debug: bool = Field(default=False, description="Devuelve la salida cruda sin filtrar, para depurar")
 
 
 class RespuestaExtraccion(BaseModel):
@@ -197,11 +208,11 @@ def health() -> dict:
     }
 
 
-@app.post("/extract", response_model=RespuestaExtraccion)
+@app.post("/extract")
 async def extract(
     solicitud: SolicitudExtraccion,
     x_service_secret: str | None = Header(default=None, alias="X-Service-Secret"),
-) -> RespuestaExtraccion:
+):
     _comprobar_secreto(x_service_secret)
 
     inicio = time.monotonic()
@@ -243,14 +254,14 @@ async def extract(
             with reader_lock:
                 resultado = reader.leer_dni(frontal=ruta_anverso, trasera=ruta_reverso)
 
-        return mapear_respuesta(resultado)
+        return resultado
 
     import asyncio
 
     bucle = asyncio.get_running_loop()
 
     try:
-        resultado = await bucle.run_in_executor(executor, trabajo)
+        resultado_crudo = await bucle.run_in_executor(executor, trabajo)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except TimeoutError as error:
@@ -265,6 +276,8 @@ async def extract(
         logger.exception("Fallo extrayendo datos del documento")
         raise HTTPException(status_code=500, detail="extraction_failed")
 
+    resultado = mapear_respuesta(resultado_crudo)
+
     logger.info(
         "Extracción completada en %.1f s: numero=%s nombre=%s domicilio=%s vigente=%s",
         time.monotonic() - inicio,
@@ -273,5 +286,8 @@ async def extract(
         bool(resultado.get("domicilio_texto")),
         resultado.get("documento_vigente"),
     )
+
+    if solicitud.debug:
+        return JSONResponse(content=jsonable_encoder({"ok": True, **resultado_crudo}))
 
     return RespuestaExtraccion(ok=True, **resultado)

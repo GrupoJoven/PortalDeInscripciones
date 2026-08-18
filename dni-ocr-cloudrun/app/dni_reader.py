@@ -2038,10 +2038,13 @@ class DNIReader:
         # un valor que ya sabíamos mal leído, sin aportar nada nuevo) ni
         # para usarlo como respaldo si el frontal no se hubiera leído. Sexo
         # y nacionalidad no llevan dígito de control propio en el estándar
-        # TD1, así que se apoyan en que nacimiento + caducidad + compuesto
-        # -que sí lo llevan y cubren casi toda la línea 2- hayan superado
-        # sus comprobaciones, como indicio de que la línea se leyó bien.
-        linea2_fiable = bool(checks.get("birth_date") and checks.get("expiry_date") and checks.get("composite"))
+        # TD1, así que se apoyan en nacimiento + caducidad -que sí lo llevan
+        # y son enteramente de línea 2- como indicio de que esa línea se
+        # leyó bien. El compuesto NO cuenta aquí a propósito: cubre también
+        # la línea 1 (número de documento), así que un fallo de OCR ahí -sin
+        # que la línea 2 tenga nada que ver- ya lo tumbaba, y de paso
+        # invalidaba sexo/nacionalidad sin motivo real.
+        linea2_fiable = bool(checks.get("birth_date") and checks.get("expiry_date"))
         birth_mrz = m.get("birth_date") if checks.get("birth_date") else None
         expiry_mrz = m.get("expiry_date") if checks.get("expiry_date") else None
         sex_mrz = m.get("sex") if linea2_fiable else None
