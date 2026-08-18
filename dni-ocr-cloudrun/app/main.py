@@ -92,13 +92,31 @@ class SolicitudExtraccion(BaseModel):
 
 
 class RespuestaExtraccion(BaseModel):
+    """OJO: `response_model` filtra la respuesta a exactamente estos campos.
+
+    `mapear_respuesta()` (en mapping.py) puede devolver un diccionario con
+    más claves de las que haya aquí declaradas: FastAPI/Pydantic ignoran en
+    silencio cualquier clave que no esté como campo de este modelo, sin
+    avisar ni fallar. Así se perdieron `sexo`, `fecha_nacimiento` y los
+    campos de conflicto de fecha de validez la primera vez que se añadieron
+    a mapping.py: el cambio estaba desplegado y funcionando, pero esta clase
+    seguía sin declararlos y los descartaba antes de que llegaran a la
+    respuesta HTTP. Cualquier campo nuevo en `mapear_respuesta()` tiene que
+    añadirse aquí también (`test_mapping.py` comprueba que no se te olvide).
+    """
+
     ok: bool
     numero: str | None = None
     nombre: str | None = None
+    sexo: str | None = None
+    fecha_nacimiento: str | None = None
     domicilio: dict | None = None
     domicilio_texto: str | None = None
     numero_valido: bool = False
     fecha_validez: str | None = None
+    fecha_validez_frontal: str | None = None
+    fecha_validez_trasera: str | None = None
+    fecha_validez_conflicto: bool = False
     documento_vigente: bool | None = None
     campos_leidos: dict = {}
     avisos: list[str] = []

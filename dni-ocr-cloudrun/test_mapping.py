@@ -8,6 +8,7 @@ importa `dni_reader.py`, solo trabaja sobre el diccionario que `DNIReader`
 ya habría devuelto.
 """
 
+import ast
 import sys
 import pathlib
 from datetime import date, timedelta
@@ -15,6 +16,32 @@ from datetime import date, timedelta
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 from app import mapping as M  # noqa: E402
+
+
+def _campos_respuesta_extraccion() -> set[str]:
+    """Campos declarados en `RespuestaExtraccion` (app/main.py).
+
+    Se leen con `ast`, sin importar main.py: importarlo arrastra
+    `dni_reader.py` y PaddleOCR, justo lo que estas pruebas evitan a
+    propósito. `response_model=RespuestaExtraccion` hace que FastAPI
+    descarte en silencio cualquier clave de `mapear_respuesta()` que no
+    esté declarada aquí -así se perdieron `sexo`, `fecha_nacimiento` y los
+    campos de conflicto de fecha de validez la primera vez que se añadieron
+    a mapping.py: el cambio estaba bien desplegado, pero esta clase seguía
+    sin declararlos-, así que el test de más abajo compara ambos lados.
+    """
+    ruta = pathlib.Path(__file__).parent / "app" / "main.py"
+    arbol = ast.parse(ruta.read_text(encoding="utf-8"))
+
+    for nodo in ast.walk(arbol):
+        if isinstance(nodo, ast.ClassDef) and nodo.name == "RespuestaExtraccion":
+            return {
+                elemento.target.id
+                for elemento in nodo.body
+                if isinstance(elemento, ast.AnnAssign) and isinstance(elemento.target, ast.Name)
+            }
+
+    raise AssertionError("No se ha encontrado la clase RespuestaExtraccion en app/main.py")
 
 
 def _resultado(
@@ -60,6 +87,18 @@ def _resultado(
 
 def main() -> int:
     fallos = []
+
+    # --- Nada de lo que devuelve mapear_respuesta() se pierde por el     --
+    # --- camino: FastAPI descarta en silencio cualquier campo que        --
+    # --- mapear_respuesta() devuelva y RespuestaExtraccion no declare.   --
+    campos_declarados = _campos_respuesta_extraccion()
+    r = M.mapear_respuesta(_resultado())
+    campos_sin_declarar = set(r.keys()) - campos_declarados
+    ok = not campos_sin_declarar
+    print(f"  {'OK   ' if ok else 'FALLO'} todos los campos de mapear_respuesta() están en RespuestaExtraccion")
+    if not ok:
+        print(f"          faltan en RespuestaExtraccion (main.py): {sorted(campos_sin_declarar)}")
+        fallos.append("campos sin declarar en RespuestaExtraccion")
 
     # --- Caso normal: apellido compuesto con guion --------------------
     r = M.mapear_respuesta(_resultado())
