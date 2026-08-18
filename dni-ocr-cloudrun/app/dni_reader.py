@@ -1264,16 +1264,37 @@ class DNIReader:
 
     def _nearest_date_to_label(self, tokens: Sequence[OCRToken], aliases: Sequence[str]) -> Optional[str]:
         label_tokens = self._find_label_tokens(tokens, aliases)
+        if not label_tokens:
+            return None
+
         date_tokens = [(t, parse_visual_date(t.text)) for t in tokens]
         date_tokens = [(t, d) for t, d in date_tokens if d]
+
+        # Algunas fechas salen agrupadas por línea en vez de en un único
+        # token: p.ej. "01 09 2025" con espacios puede llegar como tres
+        # tokens sueltos ("01", "09", "2025"), ninguno de los cuales por
+        # separado parece una fecha. Antes, en ese caso, solo se miraban
+        # tokens sueltos -y solo se caía a las fechas por línea cuando NO
+        # había NINGÚN token-fecha en todo el documento-, así que si otro
+        # campo (p.ej. la fecha de nacimiento) sí salía pegada en un solo
+        # token ("16112007"), esa se convertía en la única candidata para
+        # CUALQUIER etiqueta -incluida "VALIDEZ"- y ganaba por descarte
+        # aunque estuviera lejos y fuera el campo equivocado. Metiendo
+        # también las fechas por línea en el mismo grupo de candidatas, con
+        # la caja de toda la línea como posición, es la cercanía real a la
+        # etiqueta la que decide entre todas.
+        for line_tokens in self._group_lines(tokens):
+            line_text = " ".join(t.text for t in line_tokens)
+            parsed = parse_visual_date(line_text)
+            if not parsed:
+                continue
+            x1 = min(t.box[0] for t in line_tokens)
+            y1 = min(t.box[1] for t in line_tokens)
+            x2 = max(t.box[2] for t in line_tokens)
+            y2 = max(t.box[3] for t in line_tokens)
+            date_tokens.append((OCRToken(text=line_text, score=1.0, box=(x1, y1, x2, y2)), parsed))
+
         if not date_tokens:
-            # Algunas fechas salen agrupadas por línea.
-            for line in self._text_lines(tokens):
-                d = parse_visual_date(line)
-                if d:
-                    return d
-            return None
-        if not label_tokens:
             return None
 
         best: Optional[Tuple[float, str]] = None
