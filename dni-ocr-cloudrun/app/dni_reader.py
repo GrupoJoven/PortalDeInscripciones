@@ -1349,6 +1349,8 @@ class DNIReader:
 
         address_aliases = [
             "DOMICILIO",
+            "DOMICIU",
+            "DOMICII",
             "DOMICILI",
             "DOMICIL",
             "ADDRESS",
@@ -1375,8 +1377,8 @@ class DNIReader:
 
             # Eliminar las etiquetas de domicilio del principio
             address = re.sub(
-                r"^\s*(?:DOMICILIO|DOMICILI|DOMICIL|ADDRESS|ADRECA|ENDEREZO)"
-                r"(?:\s*/\s*(?:DOMICILIO|DOMICILI|DOMICIL|ADDRESS|ADRECA|ENDEREZO))*"
+                r"^\s*(?:DOMICILIO|DOMICIU|DOMICII|DOMICILI|DOMICIL|ADDRESS|ADRECA|ENDEREZO)"
+                r"(?:\s*/\s*(?:DOMICILIO|DOMICIU|DOMICII|DOMICILI|DOMICIL|ADDRESS|ADRECA|ENDEREZO))*"
                 r"\s*[:\-]?\s*",
                 "",
                 address,
