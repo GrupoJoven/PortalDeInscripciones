@@ -1373,17 +1373,25 @@ class DNIReader:
             # 1. Intentar obtener dirección de la misma línea
             # ---------------------------------------------------------
 
-            address = raw
-
-            # Eliminar las etiquetas de domicilio del principio
-            address = re.sub(
-                r"^\s*(?:DOMICILIO|DOMICIU|DOMICII|DOMICILI|DOMICIL|ADDRESS|ADRECA|ENDEREZO)"
+            # Buscar la etiqueta SIN anclarla al principio de la línea: el
+            # OCR a veces cuela algún carácter de ruido delante (p.ej.
+            # "C DOMICILIO/DOMICILI"). Con un `re.sub` anclado a `^` ese
+            # ruido bastaba para que no matcheara nada y la etiqueta entera
+            # se colara como si fuera la dirección -y todo lo de después se
+            # desplazara una línea: la dirección real acababa en
+            # "localidad" (y de paso, limpiada como si fuera un nombre de
+            # lugar, perdía cualquier palabra con dígitos: portal, piso...).
+            # Buscando el patrón en cualquier posición y quedándonos con lo
+            # que va después, ese ruido previo no afecta al resultado.
+            etiqueta = re.search(
+                r"(?:DOMICILIO|DOMICIU|DOMICII|DOMICILI|DOMICIL|ADDRESS|ADRECA|ENDEREZO)"
                 r"(?:\s*/\s*(?:DOMICILIO|DOMICIU|DOMICII|DOMICILI|DOMICIL|ADDRESS|ADRECA|ENDEREZO))*"
                 r"\s*[:\-]?\s*",
-                "",
-                address,
+                raw,
                 flags=re.IGNORECASE,
-            ).strip()
+            )
+
+            address = raw[etiqueta.end():].strip() if etiqueta else raw
 
             if not address:
                 address = None
@@ -1991,6 +1999,7 @@ class DNIReader:
 
     def _merge(self, front: Dict[str, Any], back: Dict[str, Any], mrz: MRZResult) -> Dict[str, Any]:
         m = mrz.fields if mrz.fields else {}
+        checks = mrz.checks or {}
         warnings: List[str] = list(mrz.errors)
 
         dni_front = front.get("dni")
@@ -2002,13 +2011,26 @@ class DNIReader:
         if dni_front and dni_mrz and dni_front != dni_mrz:
             warnings.append(f"DNI frontal ({dni_front}) y candidato MRZ ({dni_mrz}) no coinciden.")
 
+        # Si el dígito de control de un campo de la línea 2 de la MRZ no
+        # cuadra, ese dato concreto no es de fiar: ni para compararlo con el
+        # frontal (compararlo solo generaba avisos de "no coinciden" contra
+        # un valor que ya sabíamos mal leído, sin aportar nada nuevo) ni
+        # para usarlo como respaldo si el frontal no se hubiera leído. Sexo
+        # y nacionalidad no llevan dígito de control propio en el estándar
+        # TD1, así que se apoyan en que nacimiento + caducidad + compuesto
+        # -que sí lo llevan y cubren casi toda la línea 2- hayan superado
+        # sus comprobaciones, como indicio de que la línea se leyó bien.
+        linea2_fiable = bool(checks.get("birth_date") and checks.get("expiry_date") and checks.get("composite"))
+        birth_mrz = m.get("birth_date") if checks.get("birth_date") else None
+        expiry_mrz = m.get("expiry_date") if checks.get("expiry_date") else None
+        sex_mrz = m.get("sex") if linea2_fiable else None
+        nat_mrz = m.get("nationality") if linea2_fiable else None
+
         birth_front = front.get("fecha_nacimiento")
-        birth_mrz = m.get("birth_date")
         if birth_front and birth_mrz and birth_front != birth_mrz:
             warnings.append(f"Fecha de nacimiento frontal ({birth_front}) y MRZ ({birth_mrz}) no coinciden.")
 
         expiry_front = front.get("fecha_validez")
-        expiry_mrz = m.get("expiry_date")
         # A diferencia de las demás discrepancias frontal/MRZ de aquí abajo,
         # esta no se deja como texto suelto en `warnings`: se expone también
         # como flag estructurado (`validacion.fecha_validez_conflicto`, más
@@ -2018,12 +2040,10 @@ class DNIReader:
         # mismo mensaje en dos sitios distintos.
 
         sex_front = front.get("sexo")
-        sex_mrz = m.get("sex")
         if sex_front and sex_mrz and norm(sex_front) != norm(sex_mrz):
             warnings.append(f"Sexo frontal ({sex_front}) y MRZ ({sex_mrz}) no coinciden.")
 
         nat_front = front.get("nacionalidad")
-        nat_mrz = m.get("nationality")
         if nat_front and nat_mrz and norm(nat_front) != norm(nat_mrz):
             warnings.append(f"Nacionalidad frontal ({nat_front}) y MRZ ({nat_mrz}) no coinciden.")
 
@@ -2050,8 +2070,8 @@ class DNIReader:
                     if self._is_plausible_person_name(front.get("apellidos"))
                     else m.get("surnames")
                 ),
-                "sexo": front.get("sexo") or m.get("sex"),
-                "nacionalidad": front.get("nacionalidad") or m.get("nationality"),
+                "sexo": front.get("sexo") or sex_mrz,
+                "nacionalidad": front.get("nacionalidad") or nat_mrz,
                 "fecha_nacimiento": birth_front or birth_mrz,
                 "lugar_nacimiento": back.get("lugar_nacimiento"),
                 "padres": back.get("padres"),
