@@ -464,7 +464,12 @@ export default function DniCapturePage() {
           </motion.div>
         )}
 
-        {step === 'front' && (
+        {/* `!uploading` importa tanto como el `step`: al subir el anverso el
+            paso no cambia hasta que responde el servidor (a diferencia del
+            reverso, que pasa a 'processing' al instante), así que sin este
+            filtro la cámara seguía activa y dejaba disparar otra vez
+            mientras la primera foto todavía se estaba subiendo. */}
+        {step === 'front' && !uploading && (
           <DocumentCamera
             title="Anverso del documento"
             hint="La cara con la fotografía, el nombre y los apellidos."
@@ -472,7 +477,7 @@ export default function DniCapturePage() {
           />
         )}
 
-        {step === 'back' && (
+        {step === 'back' && !uploading && (
           <DocumentCamera
             title="Reverso del documento"
             hint="La cara con el domicilio y la banda de caracteres."
