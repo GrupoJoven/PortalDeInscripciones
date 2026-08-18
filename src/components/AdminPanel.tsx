@@ -360,6 +360,11 @@ export default function AdminPanel({
       prefill_group_entry: '',
       prefill_address_entry: '',
       prefill_postal_code_entry: '',
+      prefill_course_entry: '',
+      prefill_preconfirmation_first_course_option: '',
+      prefill_preconfirmation_second_course_option: '',
+      prefill_confirmation_first_course_option: '',
+      prefill_confirmation_second_course_option: '',
       dni_verification_enabled: false,
       google_form_id: '',
       google_form_edit_url: '',
@@ -414,6 +419,15 @@ export default function AdminPanel({
       prefill_group_entry: form.prefill_group_entry ?? '',
       prefill_address_entry: form.prefill_address_entry ?? '',
       prefill_postal_code_entry: form.prefill_postal_code_entry ?? '',
+      prefill_course_entry: form.prefill_course_entry ?? '',
+      prefill_preconfirmation_first_course_option:
+        form.prefill_preconfirmation_first_course_option ?? '',
+      prefill_preconfirmation_second_course_option:
+        form.prefill_preconfirmation_second_course_option ?? '',
+      prefill_confirmation_first_course_option:
+        form.prefill_confirmation_first_course_option ?? '',
+      prefill_confirmation_second_course_option:
+        form.prefill_confirmation_second_course_option ?? '',
       dni_verification_enabled: form.dni_verification_enabled ?? false,
       google_form_id: form.google_form_id ?? '',
       google_form_edit_url: form.google_form_id
@@ -493,6 +507,17 @@ export default function AdminPanel({
         nextForm.prefill_name_entry = sourceForm.prefill_name_entry ?? '';
         nextForm.prefill_address_entry = sourceForm.prefill_address_entry ?? '';
         nextForm.prefill_postal_code_entry = sourceForm.prefill_postal_code_entry ?? '';
+        nextForm.prefill_gender_entry = sourceForm.prefill_gender_entry ?? '';
+        nextForm.prefill_birth_date_entry = sourceForm.prefill_birth_date_entry ?? '';
+        nextForm.prefill_course_entry = sourceForm.prefill_course_entry ?? '';
+        nextForm.prefill_preconfirmation_first_course_option =
+          sourceForm.prefill_preconfirmation_first_course_option ?? '';
+        nextForm.prefill_preconfirmation_second_course_option =
+          sourceForm.prefill_preconfirmation_second_course_option ?? '';
+        nextForm.prefill_confirmation_first_course_option =
+          sourceForm.prefill_confirmation_first_course_option ?? '';
+        nextForm.prefill_confirmation_second_course_option =
+          sourceForm.prefill_confirmation_second_course_option ?? '';
       }
 
       if (editingForm.google_form_watch_enabled) {
@@ -668,14 +693,74 @@ export default function AdminPanel({
           return;
         }
 
-        // El código postal es opcional (se infiere solo y puede no
-        // calcularse siempre), pero si se rellena debe tener formato válido.
-        if (
-          editingForm.prefill_postal_code_entry.trim() &&
-          !isValidGoogleEntryKey(editingForm.prefill_postal_code_entry)
-        ) {
+        // El código postal, el género y la fecha de nacimiento son
+        // opcionales (no todos los formularios tienen esas preguntas), pero
+        // si se rellenan deben tener formato válido.
+        const optionalDniFields: Array<{ label: string; value: string }> = [
+          { label: 'CÓDIGO POSTAL', value: editingForm.prefill_postal_code_entry },
+          { label: 'GÉNERO', value: editingForm.prefill_gender_entry },
+          { label: 'FECHA DE NACIMIENTO', value: editingForm.prefill_birth_date_entry },
+          { label: 'CURSO AL QUE ENTRA', value: editingForm.prefill_course_entry },
+        ];
+
+        const invalidOptionalField = optionalDniFields.find(
+          (field) => field.value.trim() && !isValidGoogleEntryKey(field.value)
+        );
+
+        if (invalidOptionalField) {
           setFormModalError(
-            'El identificador de Google Forms para "CÓDIGO POSTAL" no es válido. Debe tener formato entry.123456789.'
+            `El identificador de Google Forms para "${invalidOptionalField.label}" no es válido. Debe tener formato entry.123456789.`
+          );
+          return;
+        }
+
+        // El identificador de "CURSO AL QUE ENTRA" no sirve de nada sin las
+        // cuatro plantillas de opción (es lo que permite marcar una), así
+        // que si se rellena uno de los cinco campos, se exigen los cinco.
+        const cursoFields = [
+          editingForm.prefill_course_entry,
+          editingForm.prefill_preconfirmation_first_course_option,
+          editingForm.prefill_preconfirmation_second_course_option,
+          editingForm.prefill_confirmation_first_course_option,
+          editingForm.prefill_confirmation_second_course_option,
+        ];
+
+        if (cursoFields.some((v) => v.trim()) && cursoFields.some((v) => !v.trim())) {
+          setFormModalError(
+            'Para prerrellenar "CURSO AL QUE ENTRA" hacen falta los cinco campos: el identificador y las cuatro plantillas de opción.'
+          );
+          return;
+        }
+
+        // El año de nacimiento admitido en cada opción cambia cada curso
+        // escolar: sin el marcador {ANIO} la plantilla se mandaría tal cual,
+        // con el texto de un año concreto que dejaría de ser válido.
+        const cursoTemplateFields: Array<{ label: string; value: string }> = [
+          {
+            label: 'PRECONFIRMACIÓN PRIMER CURSO',
+            value: editingForm.prefill_preconfirmation_first_course_option,
+          },
+          {
+            label: 'PRECONFIRMACIÓN SEGUNDO CURSO',
+            value: editingForm.prefill_preconfirmation_second_course_option,
+          },
+          {
+            label: 'CONFIRMACIÓN PRIMER CURSO',
+            value: editingForm.prefill_confirmation_first_course_option,
+          },
+          {
+            label: 'CONFIRMACIÓN SEGUNDO CURSO',
+            value: editingForm.prefill_confirmation_second_course_option,
+          },
+        ];
+
+        const templateWithoutPlaceholder = cursoTemplateFields.find(
+          (field) => field.value.trim() && !field.value.includes('{ANIO}')
+        );
+
+        if (templateWithoutPlaceholder) {
+          setFormModalError(
+            `El texto de la opción "${templateWithoutPlaceholder.label}" tiene que incluir el marcador {ANIO} en el punto donde va el año de nacimiento.`
           );
           return;
         }
@@ -722,10 +807,42 @@ export default function AdminPanel({
         editingForm.prefill_postal_code_entry.trim()
           ? editingForm.prefill_postal_code_entry.trim()
           : null,
+      prefill_course_entry:
+        editingForm.access_type === 'public' &&
+        editingForm.dni_verification_enabled &&
+        editingForm.prefill_course_entry.trim()
+          ? editingForm.prefill_course_entry.trim()
+          : null,
+      prefill_preconfirmation_first_course_option:
+        editingForm.access_type === 'public' &&
+        editingForm.dni_verification_enabled &&
+        editingForm.prefill_preconfirmation_first_course_option.trim()
+          ? editingForm.prefill_preconfirmation_first_course_option.trim()
+          : null,
+      prefill_preconfirmation_second_course_option:
+        editingForm.access_type === 'public' &&
+        editingForm.dni_verification_enabled &&
+        editingForm.prefill_preconfirmation_second_course_option.trim()
+          ? editingForm.prefill_preconfirmation_second_course_option.trim()
+          : null,
+      prefill_confirmation_first_course_option:
+        editingForm.access_type === 'public' &&
+        editingForm.dni_verification_enabled &&
+        editingForm.prefill_confirmation_first_course_option.trim()
+          ? editingForm.prefill_confirmation_first_course_option.trim()
+          : null,
+      prefill_confirmation_second_course_option:
+        editingForm.access_type === 'public' &&
+        editingForm.dni_verification_enabled &&
+        editingForm.prefill_confirmation_second_course_option.trim()
+          ? editingForm.prefill_confirmation_second_course_option.trim()
+          : null,
       dni_verification_enabled:
         editingForm.access_type === 'public' && editingForm.dni_verification_enabled,
       prefill_gender_entry:
-        editingForm.access_type === 'restricted' && editingForm.prefill_gender_entry.trim()
+        (editingForm.access_type === 'restricted' ||
+          (editingForm.access_type === 'public' && editingForm.dni_verification_enabled)) &&
+        editingForm.prefill_gender_entry.trim()
           ? editingForm.prefill_gender_entry.trim()
           : null,
       prefill_parent_email_entry:
@@ -737,7 +854,9 @@ export default function AdminPanel({
           ? editingForm.prefill_school_entry.trim()
           : null,
       prefill_birth_date_entry:
-        editingForm.access_type === 'restricted' && editingForm.prefill_birth_date_entry.trim()
+        (editingForm.access_type === 'restricted' ||
+          (editingForm.access_type === 'public' && editingForm.dni_verification_enabled)) &&
+        editingForm.prefill_birth_date_entry.trim()
           ? editingForm.prefill_birth_date_entry.trim()
           : null,
       prefill_group_entry:
@@ -1801,6 +1920,11 @@ export default function AdminPanel({
                             dni_verification_enabled: false,
                             prefill_address_entry: '',
                             prefill_postal_code_entry: '',
+                            prefill_course_entry: '',
+                            prefill_preconfirmation_first_course_option: '',
+                            prefill_preconfirmation_second_course_option: '',
+                            prefill_confirmation_first_course_option: '',
+                            prefill_confirmation_second_course_option: '',
                           })
                         }}
                         className="w-5 h-5"
@@ -2250,6 +2374,13 @@ export default function AdminPanel({
                                   prefill_name_entry: '',
                                   prefill_address_entry: '',
                                   prefill_postal_code_entry: '',
+                                  prefill_gender_entry: '',
+                                  prefill_birth_date_entry: '',
+                                  prefill_course_entry: '',
+                                  prefill_preconfirmation_first_course_option: '',
+                                  prefill_preconfirmation_second_course_option: '',
+                                  prefill_confirmation_first_course_option: '',
+                                  prefill_confirmation_second_course_option: '',
                                 }),
                           });
                         }}
@@ -2280,10 +2411,11 @@ export default function AdminPanel({
                       <p className="text-sm text-amber-900">
                         Introduce los identificadores <span className="font-mono font-bold">entry.XXXXXXXXX</span> de las
                         preguntas que se rellenarán con los datos leídos del documento. El DNI, el nombre y la dirección
-                        son obligatorios. El código postal es opcional: se infiere solo a partir de la dirección y puede
-                        no calcularse siempre.
+                        son obligatorios. El resto de campos de aquí abajo son opcionales.
                         Si el menor no dispone de DNI y se verifica el de un progenitor, el
-                        <span className="font-semibold"> NOMBRE COMPLETO</span> se deja en blanco a propósito.
+                        <span className="font-semibold"> NOMBRE COMPLETO</span>, el <span className="font-semibold">GÉNERO</span>,
+                        la <span className="font-semibold">FECHA DE NACIMIENTO</span> y el <span className="font-semibold">CURSO AL QUE ENTRA</span> se
+                        dejan en blanco a propósito: son los datos del progenitor, no los del menor.
                       </p>
                     </div>
 
@@ -2333,7 +2465,7 @@ export default function AdminPanel({
                         />
                       </div>
 
-                      <div className="md:col-span-2">
+                      <div>
                         <label className="block text-sm font-semibold text-slate-600 mb-2">
                           CÓDIGO POSTAL <span className="font-normal text-slate-400">(opcional)</span>
                         </label>
@@ -2346,6 +2478,150 @@ export default function AdminPanel({
                           placeholder="entry.123456789"
                           className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
                         />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-600 mb-2">
+                          GÉNERO <span className="font-normal text-slate-400">(opcional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={editingForm.prefill_gender_entry}
+                          onChange={(e) =>
+                            setEditingForm({ ...editingForm, prefill_gender_entry: e.target.value })
+                          }
+                          placeholder="entry.123456789"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                        />
+                        <p className="text-xs text-slate-400 mt-1">
+                          Pregunta de opción única con las opciones MASCULINO / FEMENINO.
+                        </p>
+                      </div>
+
+                      <div className="md:col-span-2">
+                        <label className="block text-sm font-semibold text-slate-600 mb-2">
+                          FECHA DE NACIMIENTO <span className="font-normal text-slate-400">(opcional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={editingForm.prefill_birth_date_entry}
+                          onChange={(e) =>
+                            setEditingForm({ ...editingForm, prefill_birth_date_entry: e.target.value })
+                          }
+                          placeholder="entry.123456789"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                        />
+                        <p className="text-xs text-slate-400 mt-1">
+                          Pregunta de tipo "Fecha" nativa de Google Forms. Basta con el
+                          identificador base: día, mes y año se rellenan solos a partir de él.
+                        </p>
+                      </div>
+
+                      <div className="md:col-span-2 border-t border-slate-200 pt-4 mt-2">
+                        <p className="text-sm font-semibold text-slate-600 mb-3">
+                          CURSO AL QUE ENTRA <span className="font-normal text-slate-400">(opcional)</span>
+                        </p>
+                        <p className="text-xs text-slate-400 mb-3">
+                          Se calcula solo a partir de la fecha de nacimiento leída (años cumplidos
+                          y si estamos en la primera o la segunda mitad del curso escolar). Como
+                          Google Forms necesita el texto exacto de la opción para marcarla, copia
+                          aquí el texto completo de cada una tal cual aparece en tu formulario,
+                          escribiendo <span className="font-mono font-bold">{'{ANIO}'}</span> en el
+                          punto donde va el año de nacimiento — ese año cambia cada curso escolar,
+                          así que no puede escribirse fijo. Por ejemplo, si la opción de este año
+                          es "PRECONFIRMACIÓN PRIMER CURSO (NACIDOS EN EL 2013)", escribe
+                          "PRECONFIRMACIÓN PRIMER CURSO (NACIDOS EN EL {'{ANIO}'})". O se rellenan
+                          los cinco campos, o se dejan los cinco en blanco.
+                        </p>
+
+                        <div className="mb-4">
+                          <label className="block text-sm font-semibold text-slate-600 mb-2">
+                            Identificador de la pregunta
+                          </label>
+                          <input
+                            type="text"
+                            value={editingForm.prefill_course_entry}
+                            onChange={(e) =>
+                              setEditingForm({ ...editingForm, prefill_course_entry: e.target.value })
+                            }
+                            placeholder="entry.123456789"
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-semibold text-slate-600 mb-2">
+                              Plantilla: Preconfirmación primer curso
+                            </label>
+                            <input
+                              type="text"
+                              value={editingForm.prefill_preconfirmation_first_course_option}
+                              onChange={(e) =>
+                                setEditingForm({
+                                  ...editingForm,
+                                  prefill_preconfirmation_first_course_option: e.target.value,
+                                })
+                              }
+                              placeholder="PRECONFIRMACIÓN PRIMER CURSO (NACIDOS EN EL {ANIO})"
+                              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-slate-600 mb-2">
+                              Plantilla: Preconfirmación segundo curso
+                            </label>
+                            <input
+                              type="text"
+                              value={editingForm.prefill_preconfirmation_second_course_option}
+                              onChange={(e) =>
+                                setEditingForm({
+                                  ...editingForm,
+                                  prefill_preconfirmation_second_course_option: e.target.value,
+                                })
+                              }
+                              placeholder="PRECONFIRMACIÓN SEGUNDO CURSO (NACIDOS EN EL {ANIO})"
+                              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-slate-600 mb-2">
+                              Plantilla: Confirmación primer curso
+                            </label>
+                            <input
+                              type="text"
+                              value={editingForm.prefill_confirmation_first_course_option}
+                              onChange={(e) =>
+                                setEditingForm({
+                                  ...editingForm,
+                                  prefill_confirmation_first_course_option: e.target.value,
+                                })
+                              }
+                              placeholder="CONFIRMACIÓN PRIMER CURSO (NACIDOS EN EL {ANIO})"
+                              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-semibold text-slate-600 mb-2">
+                              Plantilla: Confirmación segundo curso
+                            </label>
+                            <input
+                              type="text"
+                              value={editingForm.prefill_confirmation_second_course_option}
+                              onChange={(e) =>
+                                setEditingForm({
+                                  ...editingForm,
+                                  prefill_confirmation_second_course_option: e.target.value,
+                                })
+                              }
+                              placeholder="CONFIRMACIÓN SEGUNDO CURSO (NACIDOS EN EL {ANIO})"
+                              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
+                            />
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>

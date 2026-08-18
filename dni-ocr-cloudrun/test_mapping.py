@@ -21,19 +21,40 @@ def _resultado(
     numero="99999999Z",
     nombre="PEDRO",
     apellidos="PICA PIEDRA",
+    sexo="M",
+    fecha_nacimiento="2012-05-20",
     direccion="C. INVENTADA 15",
     localidad="VALÈNCIA",
     provincia="VALENCIA/VALÈNCIA",
     validez="2030-02-14",
+    validez_frontal=None,
+    validez_trasera=None,
     dni_valido=True,
     advertencias=None,
 ):
     return {
         "documento": {"numero": numero},
-        "titular": {"nombre": nombre, "apellidos": apellidos},
+        "titular": {
+            "nombre": nombre,
+            "apellidos": apellidos,
+            "sexo": sexo,
+            "fecha_nacimiento": fecha_nacimiento,
+        },
         "domicilio": {"direccion": direccion, "localidad": localidad, "provincia": provincia},
-        "fechas": {"validez": validez},
-        "validacion": {"dni_valido": dni_valido, "advertencias": advertencias or []},
+        "fechas": {
+            "validez": validez,
+            "validez_frontal": validez_frontal,
+            "validez_reverso": validez_trasera,
+        },
+        "validacion": {
+            "dni_valido": dni_valido,
+            "advertencias": advertencias or [],
+            # Lo calcularía _merge() en dni_reader.py a partir de las mismas
+            # dos fechas; se replica aquí porque este test no pasa por ahí.
+            "fecha_validez_conflicto": bool(
+                validez_frontal and validez_trasera and validez_frontal != validez_trasera
+            ),
+        },
     }
 
 
@@ -48,6 +69,8 @@ def main() -> int:
         and r["numero_valido"] is True
         and r["domicilio_texto"] == "C. INVENTADA 15, VALÈNCIA, VALENCIA/VALÈNCIA"
         and r["campos_leidos"] == {"numero": True, "nombre": True, "domicilio": True}
+        and r["sexo"] == "M"
+        and r["fecha_nacimiento"] == "2012-05-20"
     )
     print(f"  {'OK   ' if ok else 'FALLO'} caso normal (apellido compuesto)")
     print(f"          -> nombre={r['nombre']!r} domicilio={r['domicilio_texto']!r}")
@@ -119,6 +142,33 @@ def main() -> int:
     print(f"  {'OK   ' if ok else 'FALLO'} fecha de validez ausente -> vigente={r['documento_vigente']}")
     if not ok:
         fallos.append("vigencia ausente")
+
+    # --- Fecha de validez: frontal y trasera no coinciden -> conflicto,   --
+    # --- no se decide vigencia ni se avisa de "no se pudo comprobar" -------
+    r = M.mapear_respuesta(
+        _resultado(validez="2030-02-14", validez_frontal="2030-02-14", validez_trasera="2031-02-14")
+    )
+    ok = (
+        r["fecha_validez_conflicto"] is True
+        and r["documento_vigente"] is None
+        and r["fecha_validez_frontal"] == "2030-02-14"
+        and r["fecha_validez_trasera"] == "2031-02-14"
+        and not any("caducado" in a for a in r["avisos"])
+        and not any("no se ha podido comprobar" in a.lower() for a in r["avisos"])
+    )
+    print(f"  {'OK   ' if ok else 'FALLO'} fecha de validez frontal y trasera no coinciden -> conflicto")
+    print(f"          avisos={r['avisos']}")
+    if not ok:
+        fallos.append("conflicto fecha validez")
+
+    # --- Fecha de validez: frontal y trasera coinciden -> sin conflicto ---
+    r = M.mapear_respuesta(
+        _resultado(validez="2030-02-14", validez_frontal="2030-02-14", validez_trasera="2030-02-14")
+    )
+    ok = r["fecha_validez_conflicto"] is False and r["documento_vigente"] is True
+    print(f"  {'OK   ' if ok else 'FALLO'} fecha de validez frontal y trasera coinciden -> sin conflicto")
+    if not ok:
+        fallos.append("sin conflicto fecha validez")
 
     print()
     print("TODO CORRECTO" if not fallos else f"FALLOS: {fallos}")

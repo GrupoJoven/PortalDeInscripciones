@@ -90,8 +90,24 @@ def mapear_respuesta(resultado: dict[str, Any]) -> dict[str, Any]:
     }
     domicilio_texto = formatear_domicilio(domicilio_dict)
 
+    # "M"/"F"/"X" (ya fusionados con la MRZ en `_merge`), y la fecha de
+    # nacimiento en ISO. No son obligatorios para la verificación en sí (lo
+    # que importa es el número y el domicilio), así que si no se leen no se
+    # añade ningún aviso: sencillamente no se prerrellenarán en el formulario.
+    sexo = titular.get("sexo")
+    fecha_nacimiento = titular.get("fecha_nacimiento")
+
     fecha_validez = fechas.get("validez")
-    vigente = _es_vigente(fecha_validez)
+    fecha_validez_frontal = fechas.get("validez_frontal")
+    fecha_validez_trasera = fechas.get("validez_reverso")
+
+    # Si el anverso y la MRZ del reverso no coinciden en la fecha de validez,
+    # no hay forma fiable de decidir cuál de las dos está bien: en vez de
+    # asumir una (y quizá rechazar por error un documento en vigor, o dar
+    # por bueno uno caducado), se deja sin determinar y que quien consuma
+    # esto se lo enseñe a la persona para que elija qué foto repetir.
+    conflicto_fecha_validez = bool(validacion.get("fecha_validez_conflicto"))
+    vigente = None if conflicto_fecha_validez else _es_vigente(fecha_validez)
 
     avisos: list[str] = list(validacion.get("advertencias") or [])
 
@@ -104,16 +120,21 @@ def mapear_respuesta(resultado: dict[str, Any]) -> dict[str, Any]:
 
     if vigente is False:
         avisos.append(f"El DNI ha caducado (venció el {fecha_validez}).")
-    elif vigente is None and fecha_validez is None:
+    elif vigente is None and fecha_validez is None and not conflicto_fecha_validez:
         avisos.append("No se ha podido comprobar la fecha de caducidad.")
 
     return {
         "numero": numero,
         "nombre": nombre,
+        "sexo": sexo,
+        "fecha_nacimiento": fecha_nacimiento,
         "domicilio": domicilio_dict,
         "domicilio_texto": domicilio_texto,
         "numero_valido": bool(validacion.get("dni_valido")),
         "fecha_validez": fecha_validez,
+        "fecha_validez_frontal": fecha_validez_frontal,
+        "fecha_validez_trasera": fecha_validez_trasera,
+        "fecha_validez_conflicto": conflicto_fecha_validez,
         "documento_vigente": vigente,
         "campos_leidos": {
             "numero": bool(numero),

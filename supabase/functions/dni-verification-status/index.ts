@@ -88,9 +88,12 @@ function sanitizeExtracted(
   if (!extracted) return null;
 
   return {
-    // Si el DNI verificado es el de un progenitor, el nombre no corresponde
-    // al menor y no debe mostrarse ni prerrellenarse.
+    // Si el DNI verificado es el de un progenitor, el nombre, el sexo y la
+    // fecha de nacimiento leídos son los del adulto, no los del menor: no
+    // deben mostrarse ni prerrellenarse.
     nombre: minorWithoutDni ? null : ((extracted.nombre as string | null) ?? null),
+    sexo: minorWithoutDni ? null : ((extracted.sexo as string | null) ?? null),
+    fecha_nacimiento: minorWithoutDni ? null : ((extracted.fecha_nacimiento as string | null) ?? null),
     numero: (extracted.numero as string | null) ?? null,
     domicilio_texto: (extracted.domicilio_texto as string | null) ?? null,
     codigo_postal: (extracted.codigo_postal as string | null) ?? null,

@@ -21,6 +21,11 @@ export interface RegistrationForm {
   prefill_group_entry: string | null;
   prefill_address_entry: string | null;
   prefill_postal_code_entry: string | null;
+  prefill_course_entry: string | null;
+  prefill_preconfirmation_first_course_option: string | null;
+  prefill_preconfirmation_second_course_option: string | null;
+  prefill_confirmation_first_course_option: string | null;
+  prefill_confirmation_second_course_option: string | null;
   dni_verification_enabled: boolean;
   google_form_id: string | null;
   google_form_watch_enabled: boolean;
@@ -56,6 +61,11 @@ export interface EditingForm {
   prefill_group_entry: string;
   prefill_address_entry: string;
   prefill_postal_code_entry: string;
+  prefill_course_entry: string;
+  prefill_preconfirmation_first_course_option: string;
+  prefill_preconfirmation_second_course_option: string;
+  prefill_confirmation_first_course_option: string;
+  prefill_confirmation_second_course_option: string;
   dni_verification_enabled: boolean;
   google_form_id: string;
   google_form_edit_url: string;
@@ -147,12 +157,22 @@ export type DniSessionStatus =
 
 export interface DniExtractedData {
   nombre: string | null;
+  /** "M" / "F" / "X", tal como viene en el documento (MRZ). */
+  sexo?: string | null;
+  /** Fecha de nacimiento en ISO (YYYY-MM-DD). */
+  fecha_nacimiento?: string | null;
   numero: string | null;
   domicilio_texto: string | null;
   codigo_postal?: string | null;
   en_zona_parroquial?: boolean | null;
   numero_valido?: boolean;
   avisos?: string[];
+  /** Fecha de validez leída en el anverso. */
+  fecha_validez_frontal?: string | null;
+  /** Fecha de validez codificada en la MRZ del reverso. */
+  fecha_validez_trasera?: string | null;
+  /** true si anverso y reverso no coinciden en la fecha de validez. */
+  fecha_validez_conflicto?: boolean;
 }
 
 export interface DniStartResponse {
@@ -199,6 +219,8 @@ export interface DniUploadResponse {
   message?: string;
   /** true si el fallo es del servicio de lectura y las fotos siguen valiendo. */
   can_retry?: boolean;
+  /** Campos que no se han podido leer cuando `status` es 'failed'. */
+  missing_fields?: string[];
 }
 
 export const toDatetimeLocalValue = (iso: string | null) => {

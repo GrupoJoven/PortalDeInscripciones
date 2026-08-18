@@ -118,12 +118,19 @@ function sanitizeExtracted(extracted: Record<string, unknown> | null) {
 
   return {
     nombre: (extracted.nombre as string | null) ?? null,
+    sexo: (extracted.sexo as string | null) ?? null,
+    fecha_nacimiento: (extracted.fecha_nacimiento as string | null) ?? null,
     numero: (extracted.numero as string | null) ?? null,
     domicilio_texto: (extracted.domicilio_texto as string | null) ?? null,
     codigo_postal: (extracted.codigo_postal as string | null) ?? null,
     en_zona_parroquial: (extracted.en_zona_parroquial as boolean | null) ?? null,
     numero_valido: extracted.numero_valido === true,
     avisos: Array.isArray(extracted.avisos) ? extracted.avisos : [],
+    // Si no se propagan estos dos, un refresco de la página a mitad de
+    // sesión perdería el conflicto de fechas y dejaría confirmar sin más.
+    fecha_validez_frontal: (extracted.fecha_validez_frontal as string | null) ?? null,
+    fecha_validez_trasera: (extracted.fecha_validez_trasera as string | null) ?? null,
+    fecha_validez_conflicto: extracted.fecha_validez_conflicto === true,
   };
 }
 

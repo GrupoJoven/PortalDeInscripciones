@@ -36,6 +36,43 @@ type Step =
 
 const functionsUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 
+/** Campos que se leen del anverso y del reverso, respectivamente. */
+const CAMPOS_FRONTALES = new Set(['numero', 'nombre']);
+const CAMPOS_TRASEROS = new Set(['domicilio_texto']);
+
+/**
+ * A qué cara mandar al usuario a repetir cuando falla la lectura.
+ *
+ * La extracción solo se dispara cuando ya están las dos fotos, así que en la
+ * primera pasada eso ocurre justo al subir el reverso: usar el lado que
+ * disparó la llamada (en vez de mirar qué campo falta de verdad) mandaba
+ * siempre a repetir el reverso, aunque el dato ilegible (p.ej. el nombre)
+ * viniera del anverso.
+ */
+const ladoQueRepetir = (
+  missingFields: string[] | undefined,
+  fallback: 'front' | 'back',
+): 'front' | 'back' => {
+  if (!missingFields || missingFields.length === 0) return fallback;
+  if (missingFields.some((campo) => CAMPOS_FRONTALES.has(campo))) return 'front';
+  if (missingFields.some((campo) => CAMPOS_TRASEROS.has(campo))) return 'back';
+  return fallback;
+};
+
+/** "2030-02-14" -> "14/02/2030". Si no tiene forma de fecha ISO, se deja tal cual. */
+const formatearFecha = (fecha: string | null | undefined) => {
+  if (!fecha) return null;
+  const partes = fecha.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return partes ? `${partes[3]}/${partes[2]}/${partes[1]}` : fecha;
+};
+
+const SEXO_LEGIBLE: Record<string, string> = { M: 'Masculino', F: 'Femenino', X: 'No binario (X)' };
+
+const formatearSexo = (sexo: string | null | undefined) => {
+  if (!sexo) return null;
+  return SEXO_LEGIBLE[sexo] ?? sexo;
+};
+
 const postFunction = async <T,>(name: string, body: unknown): Promise<T> => {
   const controlador = new AbortController();
   const temporizador = window.setTimeout(() => controlador.abort(), ESPERA_MAXIMA_MS);
@@ -188,7 +225,7 @@ export default function DniCapturePage() {
             result.message ??
               'No hemos podido leer los datos del documento. Repite las fotos con mejor luz.',
           );
-          setStep(side === 'front' ? 'front' : 'back');
+          setStep(ladoQueRepetir(result.missing_fields, side === 'front' ? 'front' : 'back'));
           return;
         }
 
@@ -245,7 +282,7 @@ export default function DniCapturePage() {
           result.message ??
             'No hemos podido leer los datos del documento. Repite las fotos con mejor luz.',
         );
-        setStep('back');
+        setStep(ladoQueRepetir(result.missing_fields, 'back'));
         return;
       }
 
@@ -324,7 +361,13 @@ export default function DniCapturePage() {
     return faltan;
   }, [extracted, minorWithoutDni]);
 
-  const puedeConfirmar = camposQueFaltan.length === 0;
+  /**
+   * Si el anverso y la MRZ del reverso no coinciden en la fecha de validez,
+   * no se sabe cuál de las dos fotos está mal leída: hay que dejar que la
+   * persona compare ambas fechas y elija qué foto repetir, así que tampoco
+   * se puede confirmar mientras el conflicto siga ahí.
+   */
+  const puedeConfirmar = camposQueFaltan.length === 0 && !extracted?.fecha_validez_conflicto;
 
   return (
     <div className="min-h-[100dvh] bg-slate-50">
@@ -521,6 +564,22 @@ export default function DniCapturePage() {
                   />
                 )}
 
+                {!minorWithoutDni && (
+                  <CampoLeido
+                    etiqueta="Sexo"
+                    valor={formatearSexo(extracted.sexo)}
+                    opcional
+                  />
+                )}
+
+                {!minorWithoutDni && (
+                  <CampoLeido
+                    etiqueta="Fecha de nacimiento"
+                    valor={formatearFecha(extracted.fecha_nacimiento)}
+                    opcional
+                  />
+                )}
+
                 <CampoLeido
                   etiqueta="Número de DNI"
                   valor={extracted.numero}
@@ -580,7 +639,7 @@ export default function DniCapturePage() {
               )}
             </div>
 
-            {!puedeConfirmar && (
+            {camposQueFaltan.length > 0 && (
               <div className="flex items-start gap-2 text-red-700 bg-red-50 border border-red-200 p-4 rounded-2xl">
                 <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
                 <div className="text-sm">
@@ -592,6 +651,29 @@ export default function DniCapturePage() {
                     correspondiente con mejor luz, sin reflejos y con el documento bien
                     encajado en el marco.
                   </p>
+                </div>
+              </div>
+            )}
+
+            {extracted.fecha_validez_conflicto && (
+              <div className="flex items-start gap-2 text-red-700 bg-red-50 border border-red-200 p-4 rounded-2xl">
+                <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-bold mb-1">La fecha de validez no coincide</p>
+                  <p className="mb-2">
+                    Hemos leído una fecha en el anverso y otra distinta en el reverso.
+                    Comprueba cuál es la correcta en el DNI y repite la foto de esa cara.
+                  </p>
+                  <ul className="space-y-0.5">
+                    <li>
+                      <strong>Anverso:</strong>{' '}
+                      {formatearFecha(extracted.fecha_validez_frontal) ?? 'no se ha podido leer'}
+                    </li>
+                    <li>
+                      <strong>Reverso:</strong>{' '}
+                      {formatearFecha(extracted.fecha_validez_trasera) ?? 'no se ha podido leer'}
+                    </li>
+                  </ul>
                 </div>
               </div>
             )}

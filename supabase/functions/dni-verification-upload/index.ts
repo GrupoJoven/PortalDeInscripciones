@@ -416,12 +416,21 @@ async function extraerYGuardar({
     status: "extracted",
     extracted: {
       nombre: extracted.nombre ?? null,
+      sexo: extracted.sexo ?? null,
+      fecha_nacimiento: extracted.fecha_nacimiento ?? null,
       numero: extracted.numero ?? null,
       domicilio_texto: extracted.domicilio_texto ?? null,
       codigo_postal: extracted.codigo_postal ?? null,
       en_zona_parroquial: extracted.en_zona_parroquial ?? null,
       numero_valido: extracted.numero_valido === true,
       avisos: Array.isArray(extracted.avisos) ? extracted.avisos : [],
+      // Fecha de validez leída en el anverso y la codificada en la MRZ del
+      // reverso, por separado. Cuando no coinciden (`fecha_validez_conflicto`)
+      // el servicio de OCR no ha decidido cuál es la buena a propósito: se lo
+      // enseñamos a la persona para que compare y repita la foto que falle.
+      fecha_validez_frontal: extracted.fecha_validez_frontal ?? null,
+      fecha_validez_trasera: extracted.fecha_validez_trasera ?? null,
+      fecha_validez_conflicto: extracted.fecha_validez_conflicto === true,
     },
   });
 }

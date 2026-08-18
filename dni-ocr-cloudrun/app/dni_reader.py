@@ -2007,8 +2007,13 @@ class DNIReader:
 
         expiry_front = front.get("fecha_validez")
         expiry_mrz = m.get("expiry_date")
-        if expiry_front and expiry_mrz and expiry_front != expiry_mrz:
-            warnings.append(f"Fecha de validez frontal ({expiry_front}) y MRZ ({expiry_mrz}) no coinciden.")
+        # A diferencia de las demás discrepancias frontal/MRZ de aquí abajo,
+        # esta no se deja como texto suelto en `warnings`: se expone también
+        # como flag estructurado (`validacion.fecha_validez_conflicto`, más
+        # abajo) para que se pueda tratar como su propio caso -mostrar ambas
+        # fechas y bloquear hasta que se repita la foto que falle- en vez de
+        # un aviso más de la lista. Queda solo en el flag para no duplicar el
+        # mismo mensaje en dos sitios distintos.
 
         sex_front = front.get("sexo")
         sex_mrz = m.get("sex")
@@ -2052,6 +2057,11 @@ class DNIReader:
             "fechas": {
                 "emision": front.get("fecha_emision"),
                 "validez": expiry_front or expiry_mrz,
+                # Se exponen las dos por separado (no solo el texto de aviso
+                # de arriba) para que quien consuma esto pueda mostrar ambas
+                # fechas y decidir, en vez de asumir cuál es la buena.
+                "validez_frontal": expiry_front,
+                "validez_reverso": expiry_mrz,
             },
             "domicilio": {
                 "direccion": back.get("domicilio"),
@@ -2070,6 +2080,13 @@ class DNIReader:
                 "mrz_valida": mrz.valid,
                 "requiere_revision": False,
                 "advertencias": warnings,
+                # Aparte del texto de advertencia de arriba: un flag explícito
+                # para que quien consuma esto pueda tratar la discrepancia de
+                # fecha de validez como un caso propio (mostrar ambas fechas y
+                # dejar elegir qué foto repetir) en vez de un aviso más.
+                "fecha_validez_conflicto": bool(
+                    expiry_front and expiry_mrz and expiry_front != expiry_mrz
+                ),
             },
             "fuentes": {
                 "frontal": front,
