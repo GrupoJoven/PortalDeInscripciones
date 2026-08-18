@@ -1262,6 +1262,36 @@ class DNIReader:
             return False
         return True
 
+    @staticmethod
+    def _parse_date_skipping_alnum_tokens(text: str) -> Optional[str]:
+        """Como `parse_visual_date`, pero antes descarta los tokens (separados
+        por espacios) que contengan alguna letra.
+
+        En layouts donde "NUM SOPORT" y "VALIDEZ/VALIDESA" comparten fila
+        (p.ej. "BM0139812 01 092025"), el número de soporte cuela sus propios
+        dígitos en la línea. `parse_visual_date` ya prueba a leer la línea
+        entera como día-mes-año separados por puntuación, y si eso falla,
+        prueba ocho dígitos seguidos -pero ahí los dígitos del soporte se
+        cuelan por medio y ese conteo también falla-. Descartando primero
+        cualquier token con letras (el soporte, que en un DNI siempre lleva
+        alguna) y concatenando el resto, da igual que el OCR una día+mes,
+        mes+año, o los dos separados de ocho maneras distintas: mientras
+        sumen ocho dígitos limpios, se interpretan como DDMMYYYY.
+        """
+        digitos = "".join(
+            re.sub(r"\D", "", token)
+            for token in text.split()
+            if not re.search(r"[A-Za-z]", token)
+        )
+        if len(digitos) != 8:
+            return None
+
+        d, mo, y = int(digitos[0:2]), int(digitos[2:4]), int(digitos[4:8])
+        try:
+            return date(y, mo, d).isoformat()
+        except ValueError:
+            return None
+
     def _nearest_date_to_label(self, tokens: Sequence[OCRToken], aliases: Sequence[str]) -> Optional[str]:
         label_tokens = self._find_label_tokens(tokens, aliases)
         if not label_tokens:
@@ -1285,7 +1315,7 @@ class DNIReader:
         # etiqueta la que decide entre todas.
         for line_tokens in self._group_lines(tokens):
             line_text = " ".join(t.text for t in line_tokens)
-            parsed = parse_visual_date(line_text)
+            parsed = parse_visual_date(line_text) or self._parse_date_skipping_alnum_tokens(line_text)
             if not parsed:
                 continue
             x1 = min(t.box[0] for t in line_tokens)
