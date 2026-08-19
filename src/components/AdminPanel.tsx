@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { motion } from 'motion/react';
-import { 
+import {
   Plus,
   Trash2,
   Power,
@@ -75,15 +75,14 @@ export default function AdminPanel({
   const [copySourceSelectorOpen, setCopySourceSelectorOpen] = useState(false);
 
   const blockedFormIds = [
-  '1688ad22-3c20-4474-97d1-8e65b7cd2c5b',
-  '53352ca6-2dc6-45d0-9f07-cc3d170e5736',
-  '5d0b4e27-ba69-416c-af3f-7a29c72219d2',
-  'c1c11f45-99b0-4d0d-95bc-02b2c6192437',
-  '147418ab-9758-4062-8aca-714d65aef2a7',
-  '5ce1a334-29b8-46e5-b5c9-3a233ea65309',
-  '57c22a7c-3514-4895-b7cf-234f27905a07',
-  'a223b6b3-616e-41b0-9cf5-455ce0f64145',
-];
+    '1688ad22-3c20-4474-97d1-8e65b7cd2c5b',
+    '53352ca6-2dc6-45d0-9f07-cc3d170e5736',
+    '5d0b4e27-ba69-416c-af3f-7a29c72219d2',
+    'c1c11f45-99b0-4d0d-95bc-02b2c6192437',
+    '147418ab-9758-4062-8aca-714d65aef2a7',
+    '5ce1a334-29b8-46e5-b5c9-3a233ea65309',
+    '57c22a7c-3514-4895-b7cf-234f27905a07',
+  ];
 
 
   const loadFormsData = async () => {
@@ -265,7 +264,7 @@ export default function AdminPanel({
           'La URL debe ser una URL válida de encuestado de Google Forms y terminar en /viewform.',
       };
     }
-  
+
     if (parsedUrl.searchParams.has('usp') && parsedUrl.searchParams.get('usp') !== 'header') {
       parsedUrl.searchParams.set('usp', 'header');
     }
@@ -597,7 +596,7 @@ export default function AdminPanel({
     if (editingForm.google_form_watch_enabled && (!parsedEditUrl || !parsedEditUrl.isValid)) {
       setFormModalError(
         parsedEditUrl?.error ||
-          'La URL de edición del formulario de Google no es válida.'
+        'La URL de edición del formulario de Google no es válida.'
       );
       return;
     }
@@ -806,68 +805,68 @@ export default function AdminPanel({
       open_date: fromDatetimeLocalValue(editingForm.open_date),
       close_date: fromDatetimeLocalValue(editingForm.close_date),
       prefill_public_id_entry:
-          editingForm.access_type === 'restricted' && editingForm.prefill_public_id_entry.trim()
-            ? editingForm.prefill_public_id_entry.trim()
-            : null,
+        editingForm.access_type === 'restricted' && editingForm.prefill_public_id_entry.trim()
+          ? editingForm.prefill_public_id_entry.trim()
+          : null,
       prefill_name_entry:
         (editingForm.access_type === 'restricted' ||
           (editingForm.access_type === 'public' && editingForm.dni_verification_enabled)) &&
-        editingForm.prefill_name_entry.trim()
+          editingForm.prefill_name_entry.trim()
           ? editingForm.prefill_name_entry.trim()
           : null,
       prefill_dni_entry:
         (editingForm.access_type === 'restricted' ||
           (editingForm.access_type === 'public' && editingForm.dni_verification_enabled)) &&
-        editingForm.prefill_dni_entry.trim()
+          editingForm.prefill_dni_entry.trim()
           ? editingForm.prefill_dni_entry.trim()
           : null,
       prefill_address_entry:
         editingForm.access_type === 'public' &&
-        editingForm.dni_verification_enabled &&
-        editingForm.prefill_address_entry.trim()
+          editingForm.dni_verification_enabled &&
+          editingForm.prefill_address_entry.trim()
           ? editingForm.prefill_address_entry.trim()
           : null,
       prefill_postal_code_entry:
         editingForm.access_type === 'public' &&
-        editingForm.dni_verification_enabled &&
-        editingForm.prefill_postal_code_entry.trim()
+          editingForm.dni_verification_enabled &&
+          editingForm.prefill_postal_code_entry.trim()
           ? editingForm.prefill_postal_code_entry.trim()
           : null,
       prefill_course_entry:
         editingForm.access_type === 'public' &&
-        editingForm.dni_verification_enabled &&
-        editingForm.prefill_course_entry.trim()
+          editingForm.dni_verification_enabled &&
+          editingForm.prefill_course_entry.trim()
           ? editingForm.prefill_course_entry.trim()
           : null,
       prefill_preconfirmation_first_course_option:
         editingForm.access_type === 'public' &&
-        editingForm.dni_verification_enabled &&
-        editingForm.prefill_preconfirmation_first_course_option.trim()
+          editingForm.dni_verification_enabled &&
+          editingForm.prefill_preconfirmation_first_course_option.trim()
           ? editingForm.prefill_preconfirmation_first_course_option.trim()
           : null,
       prefill_preconfirmation_second_course_option:
         editingForm.access_type === 'public' &&
-        editingForm.dni_verification_enabled &&
-        editingForm.prefill_preconfirmation_second_course_option.trim()
+          editingForm.dni_verification_enabled &&
+          editingForm.prefill_preconfirmation_second_course_option.trim()
           ? editingForm.prefill_preconfirmation_second_course_option.trim()
           : null,
       prefill_confirmation_first_course_option:
         editingForm.access_type === 'public' &&
-        editingForm.dni_verification_enabled &&
-        editingForm.prefill_confirmation_first_course_option.trim()
+          editingForm.dni_verification_enabled &&
+          editingForm.prefill_confirmation_first_course_option.trim()
           ? editingForm.prefill_confirmation_first_course_option.trim()
           : null,
       prefill_confirmation_second_course_option:
         editingForm.access_type === 'public' &&
-        editingForm.dni_verification_enabled &&
-        editingForm.prefill_confirmation_second_course_option.trim()
+          editingForm.dni_verification_enabled &&
+          editingForm.prefill_confirmation_second_course_option.trim()
           ? editingForm.prefill_confirmation_second_course_option.trim()
           : null,
       prefill_underage:
         editingForm.access_type === 'public' &&
-        editingForm.dni_verification_enabled &&
-        editingForm.prefill_underage_enabled &&
-        editingForm.prefill_underage.trim()
+          editingForm.dni_verification_enabled &&
+          editingForm.prefill_underage_enabled &&
+          editingForm.prefill_underage.trim()
           ? editingForm.prefill_underage.trim()
           : null,
       prefill_underage_enabled:
@@ -876,9 +875,9 @@ export default function AdminPanel({
         editingForm.prefill_underage_enabled,
       prefill_underage_reference_date:
         editingForm.access_type === 'public' &&
-        editingForm.dni_verification_enabled &&
-        editingForm.prefill_underage_enabled &&
-        editingForm.prefill_underage_reference_date.trim()
+          editingForm.dni_verification_enabled &&
+          editingForm.prefill_underage_enabled &&
+          editingForm.prefill_underage_reference_date.trim()
           ? editingForm.prefill_underage_reference_date.trim()
           : null,
       dni_verification_enabled:
@@ -886,7 +885,7 @@ export default function AdminPanel({
       prefill_gender_entry:
         (editingForm.access_type === 'restricted' ||
           (editingForm.access_type === 'public' && editingForm.dni_verification_enabled)) &&
-        editingForm.prefill_gender_entry.trim()
+          editingForm.prefill_gender_entry.trim()
           ? editingForm.prefill_gender_entry.trim()
           : null,
       prefill_parent_email_entry:
@@ -900,7 +899,7 @@ export default function AdminPanel({
       prefill_birth_date_entry:
         (editingForm.access_type === 'restricted' ||
           (editingForm.access_type === 'public' && editingForm.dni_verification_enabled)) &&
-        editingForm.prefill_birth_date_entry.trim()
+          editingForm.prefill_birth_date_entry.trim()
           ? editingForm.prefill_birth_date_entry.trim()
           : null,
       prefill_group_entry:
@@ -1352,21 +1351,19 @@ export default function AdminPanel({
       <div className="flex bg-slate-100 p-1 rounded-xl w-fit mb-8">
         <button
           onClick={() => setActiveTab('forms')}
-          className={`px-6 py-2 rounded-lg font-bold transition-all ${
-            activeTab === 'forms'
-              ? 'bg-white text-indigo-600 shadow-sm'
-              : 'text-slate-500 hover:text-slate-700'
-          }`}
+          className={`px-6 py-2 rounded-lg font-bold transition-all ${activeTab === 'forms'
+            ? 'bg-white text-indigo-600 shadow-sm'
+            : 'text-slate-500 hover:text-slate-700'
+            }`}
         >
           Formularios
         </button>
         <button
           onClick={() => setActiveTab('access')}
-          className={`px-6 py-2 rounded-lg font-bold transition-all ${
-            activeTab === 'access'
-              ? 'bg-white text-indigo-600 shadow-sm'
-              : 'text-slate-500 hover:text-slate-700'
-          }`}
+          className={`px-6 py-2 rounded-lg font-bold transition-all ${activeTab === 'access'
+            ? 'bg-white text-indigo-600 shadow-sm'
+            : 'text-slate-500 hover:text-slate-700'
+            }`}
         >
           Accesos
         </button>
@@ -1421,11 +1418,10 @@ export default function AdminPanel({
                       )}
 
                       <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                          form.access_type === 'public'
-                            ? 'bg-blue-100 text-blue-700'
-                            : 'bg-indigo-100 text-indigo-700'
-                        }`}
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${form.access_type === 'public'
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'bg-indigo-100 text-indigo-700'
+                          }`}
                       >
                         {form.access_type === 'public' ? 'Acceso libre' : 'Acceso limitado'}
                       </span>
@@ -1459,11 +1455,10 @@ export default function AdminPanel({
                       <>
                         <button
                           onClick={() => toggleFormActive(form)}
-                          className={`p-2 rounded-xl transition-all ${
-                            form.active
-                              ? 'bg-green-50 text-green-600 hover:bg-green-100'
-                              : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
-                          }`}
+                          className={`p-2 rounded-xl transition-all ${form.active
+                            ? 'bg-green-50 text-green-600 hover:bg-green-100'
+                            : 'bg-slate-50 text-slate-400 hover:bg-slate-100'
+                            }`}
                           title={form.active ? 'Desactivar' : 'Activar'}
                         >
                           {form.active ? <Power className="w-5 h-5" /> : <PowerOff className="w-5 h-5" />}
@@ -1909,11 +1904,10 @@ export default function AdminPanel({
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <label
-                      className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
-                        editingForm.access_type === 'public'
-                          ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                          : 'bg-slate-50 border-slate-200 text-slate-600'
-                      }`}
+                      className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer transition-all ${editingForm.access_type === 'public'
+                        ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                        : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
                     >
                       <input
                         type="radio"
@@ -1952,11 +1946,10 @@ export default function AdminPanel({
                     </label>
 
                     <label
-                      className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer transition-all ${
-                        editingForm.access_type === 'restricted'
-                          ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                          : 'bg-slate-50 border-slate-200 text-slate-600'
-                      }`}
+                      className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer transition-all ${editingForm.access_type === 'restricted'
+                        ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                        : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
                     >
                       <input
                         type="radio"
@@ -2082,11 +2075,10 @@ export default function AdminPanel({
                       {groups.map((group) => (
                         <label
                           key={group.id}
-                          className={`flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer ${
-                            editingForm.group_ids.includes(group.id)
-                              ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                              : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-300'
-                          }`}
+                          className={`flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer ${editingForm.group_ids.includes(group.id)
+                            ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                            : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-300'
+                            }`}
                         >
                           <input
                             type="checkbox"
@@ -2245,7 +2237,7 @@ export default function AdminPanel({
                   </div>
                 )}
 
-{editingForm.access_type === 'restricted' && editingForm.google_form_watch_enabled && (
+                {editingForm.access_type === 'restricted' && editingForm.google_form_watch_enabled && (
                   <div className="md:col-span-2">
                     <label className="block text-sm font-bold text-slate-700 mb-4">
                       Campos de seguimiento de preguntas
@@ -2421,21 +2413,21 @@ export default function AdminPanel({
                             ...(e.target.checked
                               ? {}
                               : {
-                                  prefill_dni_entry: '',
-                                  prefill_name_entry: '',
-                                  prefill_address_entry: '',
-                                  prefill_postal_code_entry: '',
-                                  prefill_gender_entry: '',
-                                  prefill_birth_date_entry: '',
-                                  prefill_course_entry: '',
-                                  prefill_preconfirmation_first_course_option: '',
-                                  prefill_preconfirmation_second_course_option: '',
-                                  prefill_confirmation_first_course_option: '',
-                                  prefill_confirmation_second_course_option: '',
-                                  prefill_underage: '',
-                                  prefill_underage_enabled: false,
-                                  prefill_underage_reference_date: '',
-                                }),
+                                prefill_dni_entry: '',
+                                prefill_name_entry: '',
+                                prefill_address_entry: '',
+                                prefill_postal_code_entry: '',
+                                prefill_gender_entry: '',
+                                prefill_birth_date_entry: '',
+                                prefill_course_entry: '',
+                                prefill_preconfirmation_first_course_option: '',
+                                prefill_preconfirmation_second_course_option: '',
+                                prefill_confirmation_first_course_option: '',
+                                prefill_confirmation_second_course_option: '',
+                                prefill_underage: '',
+                                prefill_underage_enabled: false,
+                                prefill_underage_reference_date: '',
+                              }),
                           });
                         }}
                         className="mt-1 w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
@@ -2690,9 +2682,9 @@ export default function AdminPanel({
                                 ...(e.target.checked
                                   ? {}
                                   : {
-                                      prefill_underage: '',
-                                      prefill_underage_reference_date: '',
-                                    }),
+                                    prefill_underage: '',
+                                    prefill_underage_reference_date: '',
+                                  }),
                               })
                             }
                             className="mt-1 w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
