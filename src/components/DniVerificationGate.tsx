@@ -211,15 +211,16 @@ export default function DniVerificationGate({
             <div className="space-y-4 text-slate-600 mb-6">
               <p>
                 Para inscribirte en este formulario es necesario{' '}
-                <strong>verificar el DNI del menor</strong>.
+                <strong>verificar el DNI del participante</strong>, ya sea este menor o
+                mayor de edad.
               </p>
 
               <p>
-                Si el menor tiene menos de 14 años y todavía no dispone de DNI, habrá que
-                verificar el DNI de alguno de los padres. Necesitamos comprobar que la
-                familia pertenece a la <strong>zona pastoral de la parroquia</strong>, ya
-                que nos vemos obligados a priorizar las inscripciones siguiendo este
-                criterio.
+                Si es menor de 14 años y todavía no dispone de DNI, habrá que
+                verificar el DNI de alguno de los padres. En caso de haber más demanda
+                de la que podamos atender, necesitamos comprobar que pertenece a la{' '}
+                <strong>zona pastoral de la parroquia</strong>, ya que nos vemos
+                obligados a priorizar las inscripciones siguiendo este criterio.
               </p>
             </div>
 
