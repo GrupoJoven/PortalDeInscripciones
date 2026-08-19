@@ -668,10 +668,6 @@ export default function AdminPanel({
         const requiredDniFields: Array<{ label: string; value: string }> = [
           { label: 'DNI', value: editingForm.prefill_dni_entry },
           { label: 'NOMBRE COMPLETO', value: editingForm.prefill_name_entry },
-          {
-            label: 'DIRECCIÓN DE LA RESIDENCIA HABITUAL',
-            value: editingForm.prefill_address_entry,
-          },
         ];
 
         const missingDniField = requiredDniFields.find((field) => !field.value.trim());
@@ -693,10 +689,11 @@ export default function AdminPanel({
           return;
         }
 
-        // El código postal, el género y la fecha de nacimiento son
-        // opcionales (no todos los formularios tienen esas preguntas), pero
-        // si se rellenan deben tener formato válido.
+        // La dirección, el código postal, el género y la fecha de nacimiento
+        // son opcionales (no todos los formularios tienen esas preguntas),
+        // pero si se rellenan deben tener formato válido.
         const optionalDniFields: Array<{ label: string; value: string }> = [
+          { label: 'DIRECCIÓN DE LA RESIDENCIA HABITUAL', value: editingForm.prefill_address_entry },
           { label: 'CÓDIGO POSTAL', value: editingForm.prefill_postal_code_entry },
           { label: 'GÉNERO', value: editingForm.prefill_gender_entry },
           { label: 'FECHA DE NACIMIENTO', value: editingForm.prefill_birth_date_entry },
@@ -1205,8 +1202,7 @@ export default function AdminPanel({
       editingForm.access_type === 'public' && editingForm.dni_verification_enabled &&
       (
         !editingForm.prefill_dni_entry.trim() ||
-        !editingForm.prefill_name_entry.trim() ||
-        !editingForm.prefill_address_entry.trim()
+        !editingForm.prefill_name_entry.trim()
       )
     ) ||
 
@@ -2410,7 +2406,7 @@ export default function AdminPanel({
                     <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-4">
                       <p className="text-sm text-amber-900">
                         Introduce los identificadores <span className="font-mono font-bold">entry.XXXXXXXXX</span> de las
-                        preguntas que se rellenarán con los datos leídos del documento. El DNI, el nombre y la dirección
+                        preguntas que se rellenarán con los datos leídos del documento. El DNI y el nombre
                         son obligatorios. El resto de campos de aquí abajo son opcionales.
                         Si el menor no dispone de DNI y se verifica el de un progenitor, el
                         <span className="font-semibold"> NOMBRE COMPLETO</span>, el <span className="font-semibold">GÉNERO</span>,
@@ -2452,7 +2448,7 @@ export default function AdminPanel({
 
                       <div className="md:col-span-2">
                         <label className="block text-sm font-semibold text-slate-600 mb-2">
-                          DIRECCIÓN DE LA RESIDENCIA HABITUAL
+                          DIRECCIÓN DE LA RESIDENCIA HABITUAL <span className="font-normal text-slate-400">(opcional)</span>
                         </label>
                         <input
                           type="text"
