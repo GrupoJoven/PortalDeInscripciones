@@ -1984,6 +1984,54 @@ export default function AdminPanel({
                   </div>
                 </div>
 
+                {editingForm.access_type === 'public' && (
+                  <div className="md:col-span-2">
+                    <label className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editingForm.dni_verification_enabled}
+                        onChange={(e) => {
+                          setCopySourceSelectorOpen(false);
+                          setEditingForm({
+                            ...editingForm,
+                            dni_verification_enabled: e.target.checked,
+                            ...(e.target.checked
+                              ? {}
+                              : {
+                                prefill_dni_entry: '',
+                                prefill_name_entry: '',
+                                prefill_address_entry: '',
+                                prefill_postal_code_entry: '',
+                                prefill_gender_entry: '',
+                                prefill_birth_date_entry: '',
+                                prefill_course_entry: '',
+                                prefill_preconfirmation_first_course_option: '',
+                                prefill_preconfirmation_second_course_option: '',
+                                prefill_confirmation_first_course_option: '',
+                                prefill_confirmation_second_course_option: '',
+                                prefill_underage: '',
+                                prefill_underage_enabled: false,
+                                prefill_underage_reference_date: '',
+                              }),
+                          });
+                        }}
+                        className="mt-1 w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <div className="font-bold text-sm text-slate-700">
+                          Verificación de DNI
+                        </div>
+                        <div className="text-sm text-slate-500">
+                          Si está activada, antes de abrir el formulario habrá que fotografiar el DNI del menor
+                          con el móvil (o el de un progenitor, si el menor tiene menos de 14 años y no dispone de DNI).
+                          El DNI, el nombre y el domicilio detectados se prerrellenan en el formulario.
+                          Las fotos se borran en cuanto se confirman los datos.
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-2">
                     Fecha de Apertura
@@ -2398,53 +2446,6 @@ export default function AdminPanel({
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
                       />
                     </div>
-                  </div>
-                )}
-                {editingForm.access_type === 'public' && (
-                  <div className="md:col-span-2">
-                    <label className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={editingForm.dni_verification_enabled}
-                        onChange={(e) => {
-                          setCopySourceSelectorOpen(false);
-                          setEditingForm({
-                            ...editingForm,
-                            dni_verification_enabled: e.target.checked,
-                            ...(e.target.checked
-                              ? {}
-                              : {
-                                prefill_dni_entry: '',
-                                prefill_name_entry: '',
-                                prefill_address_entry: '',
-                                prefill_postal_code_entry: '',
-                                prefill_gender_entry: '',
-                                prefill_birth_date_entry: '',
-                                prefill_course_entry: '',
-                                prefill_preconfirmation_first_course_option: '',
-                                prefill_preconfirmation_second_course_option: '',
-                                prefill_confirmation_first_course_option: '',
-                                prefill_confirmation_second_course_option: '',
-                                prefill_underage: '',
-                                prefill_underage_enabled: false,
-                                prefill_underage_reference_date: '',
-                              }),
-                          });
-                        }}
-                        className="mt-1 w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <div>
-                        <div className="font-bold text-sm text-slate-700">
-                          Verificación de DNI
-                        </div>
-                        <div className="text-sm text-slate-500">
-                          Si está activada, antes de abrir el formulario habrá que fotografiar el DNI del menor
-                          con el móvil (o el de un progenitor, si el menor tiene menos de 14 años y no dispone de DNI).
-                          El DNI, el nombre y el domicilio detectados se prerrellenan en el formulario.
-                          Las fotos se borran en cuanto se confirman los datos.
-                        </div>
-                      </div>
-                    </label>
                   </div>
                 )}
 
