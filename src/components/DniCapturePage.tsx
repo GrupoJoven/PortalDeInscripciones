@@ -122,7 +122,7 @@ export default function DniCapturePage() {
   const [frontPreview, setFrontPreview] = useState<string | null>(null);
   const [backPreview, setBackPreview] = useState<string | null>(null);
 
-  const titularDelDocumento = minorWithoutDni ? 'del padre, madre o tutor' : 'del menor';
+  const titularDelDocumento = minorWithoutDni ? 'del padre, madre o tutor' : 'del participante';
 
   // --- Carga inicial de la sesión ----------------------------------------
   useEffect(() => {
