@@ -26,6 +26,9 @@ export interface RegistrationForm {
   prefill_preconfirmation_second_course_option: string | null;
   prefill_confirmation_first_course_option: string | null;
   prefill_confirmation_second_course_option: string | null;
+  prefill_underage: string | null;
+  prefill_underage_enabled: boolean;
+  prefill_underage_reference_date: string | null;
   dni_verification_enabled: boolean;
   google_form_id: string | null;
   google_form_watch_enabled: boolean;
@@ -66,6 +69,9 @@ export interface EditingForm {
   prefill_preconfirmation_second_course_option: string;
   prefill_confirmation_first_course_option: string;
   prefill_confirmation_second_course_option: string;
+  prefill_underage: string;
+  prefill_underage_enabled: boolean;
+  prefill_underage_reference_date: string;
   dni_verification_enabled: boolean;
   google_form_id: string;
   google_form_edit_url: string;

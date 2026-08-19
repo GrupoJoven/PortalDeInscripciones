@@ -82,6 +82,7 @@ export default function AdminPanel({
   '147418ab-9758-4062-8aca-714d65aef2a7',
   '5ce1a334-29b8-46e5-b5c9-3a233ea65309',
   '57c22a7c-3514-4895-b7cf-234f27905a07',
+  'a223b6b3-616e-41b0-9cf5-455ce0f64145',
 ];
 
 
@@ -365,6 +366,9 @@ export default function AdminPanel({
       prefill_preconfirmation_second_course_option: '',
       prefill_confirmation_first_course_option: '',
       prefill_confirmation_second_course_option: '',
+      prefill_underage: '',
+      prefill_underage_enabled: false,
+      prefill_underage_reference_date: '',
       dni_verification_enabled: false,
       google_form_id: '',
       google_form_edit_url: '',
@@ -428,6 +432,9 @@ export default function AdminPanel({
         form.prefill_confirmation_first_course_option ?? '',
       prefill_confirmation_second_course_option:
         form.prefill_confirmation_second_course_option ?? '',
+      prefill_underage: form.prefill_underage ?? '',
+      prefill_underage_enabled: form.prefill_underage_enabled ?? false,
+      prefill_underage_reference_date: form.prefill_underage_reference_date ?? '',
       dni_verification_enabled: form.dni_verification_enabled ?? false,
       google_form_id: form.google_form_id ?? '',
       google_form_edit_url: form.google_form_id
@@ -518,6 +525,9 @@ export default function AdminPanel({
           sourceForm.prefill_confirmation_first_course_option ?? '';
         nextForm.prefill_confirmation_second_course_option =
           sourceForm.prefill_confirmation_second_course_option ?? '';
+        nextForm.prefill_underage = sourceForm.prefill_underage ?? '';
+        nextForm.prefill_underage_enabled = sourceForm.prefill_underage_enabled ?? false;
+        nextForm.prefill_underage_reference_date = sourceForm.prefill_underage_reference_date ?? '';
       }
 
       if (editingForm.google_form_watch_enabled) {
@@ -761,6 +771,25 @@ export default function AdminPanel({
           );
           return;
         }
+
+        if (editingForm.prefill_underage_enabled) {
+          if (
+            !editingForm.prefill_underage.trim() ||
+            !editingForm.prefill_underage_reference_date.trim()
+          ) {
+            setFormModalError(
+              'El identificador de Google Forms y el primer día del fin de semana son obligatorios si activas "Monitores menores".'
+            );
+            return;
+          }
+
+          if (!isValidGoogleEntryKey(editingForm.prefill_underage)) {
+            setFormModalError(
+              'El identificador de Google Forms para "¿ES MENOR DE EDAD?" no es válido. Debe tener formato entry.123456789.'
+            );
+            return;
+          }
+        }
       }
     }
 
@@ -833,6 +862,24 @@ export default function AdminPanel({
         editingForm.dni_verification_enabled &&
         editingForm.prefill_confirmation_second_course_option.trim()
           ? editingForm.prefill_confirmation_second_course_option.trim()
+          : null,
+      prefill_underage:
+        editingForm.access_type === 'public' &&
+        editingForm.dni_verification_enabled &&
+        editingForm.prefill_underage_enabled &&
+        editingForm.prefill_underage.trim()
+          ? editingForm.prefill_underage.trim()
+          : null,
+      prefill_underage_enabled:
+        editingForm.access_type === 'public' &&
+        editingForm.dni_verification_enabled &&
+        editingForm.prefill_underage_enabled,
+      prefill_underage_reference_date:
+        editingForm.access_type === 'public' &&
+        editingForm.dni_verification_enabled &&
+        editingForm.prefill_underage_enabled &&
+        editingForm.prefill_underage_reference_date.trim()
+          ? editingForm.prefill_underage_reference_date.trim()
           : null,
       dni_verification_enabled:
         editingForm.access_type === 'public' && editingForm.dni_verification_enabled,
@@ -1203,6 +1250,14 @@ export default function AdminPanel({
       (
         !editingForm.prefill_dni_entry.trim() ||
         !editingForm.prefill_name_entry.trim()
+      )
+    ) ||
+    (
+      editingForm.access_type === 'public' && editingForm.dni_verification_enabled &&
+      editingForm.prefill_underage_enabled &&
+      (
+        !editingForm.prefill_underage.trim() ||
+        !editingForm.prefill_underage_reference_date.trim()
       )
     ) ||
 
@@ -2377,6 +2432,9 @@ export default function AdminPanel({
                                   prefill_preconfirmation_second_course_option: '',
                                   prefill_confirmation_first_course_option: '',
                                   prefill_confirmation_second_course_option: '',
+                                  prefill_underage: '',
+                                  prefill_underage_enabled: false,
+                                  prefill_underage_reference_date: '',
                                 }),
                           });
                         }}
@@ -2618,6 +2676,77 @@ export default function AdminPanel({
                             />
                           </div>
                         </div>
+                      </div>
+
+                      <div className="md:col-span-2 border-t border-slate-200 pt-4 mt-2">
+                        <label className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer mb-3">
+                          <input
+                            type="checkbox"
+                            checked={editingForm.prefill_underage_enabled}
+                            onChange={(e) =>
+                              setEditingForm({
+                                ...editingForm,
+                                prefill_underage_enabled: e.target.checked,
+                                ...(e.target.checked
+                                  ? {}
+                                  : {
+                                      prefill_underage: '',
+                                      prefill_underage_reference_date: '',
+                                    }),
+                              })
+                            }
+                            className="mt-1 w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <div>
+                            <div className="font-bold text-sm text-slate-700">
+                              Monitores menores
+                            </div>
+                            <div className="text-sm text-slate-500">
+                              Si está activado, se compara el primer día del fin de semana con la fecha
+                              de nacimiento leída del DNI y se marca automáticamente "Sí" o "No" en la
+                              pregunta de si la persona es menor de edad.
+                            </div>
+                          </div>
+                        </label>
+
+                        {editingForm.prefill_underage_enabled && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-sm font-semibold text-slate-600 mb-2">
+                                Identificador de "¿ES MENOR DE EDAD?"
+                              </label>
+                              <input
+                                type="text"
+                                value={editingForm.prefill_underage}
+                                onChange={(e) =>
+                                  setEditingForm({ ...editingForm, prefill_underage: e.target.value })
+                                }
+                                placeholder="entry.123456789"
+                                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                              />
+                              <p className="text-xs text-slate-400 mt-1">
+                                Pregunta de opción única con las respuestas literales "Sí" / "No".
+                              </p>
+                            </div>
+
+                            <div>
+                              <label className="block text-sm font-semibold text-slate-600 mb-2">
+                                Primer día del fin de semana
+                              </label>
+                              <input
+                                type="date"
+                                value={editingForm.prefill_underage_reference_date}
+                                onChange={(e) =>
+                                  setEditingForm({
+                                    ...editingForm,
+                                    prefill_underage_reference_date: e.target.value,
+                                  })
+                                }
+                                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

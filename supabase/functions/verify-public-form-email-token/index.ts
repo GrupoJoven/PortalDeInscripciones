@@ -26,6 +26,8 @@ type PublicFormRow = {
   prefill_preconfirmation_second_course_option: string | null;
   prefill_confirmation_first_course_option: string | null;
   prefill_confirmation_second_course_option: string | null;
+  prefill_underage: string | null;
+  prefill_underage_reference_date: string | null;
 };
 
 type DniSession = {
@@ -195,7 +197,9 @@ async function getPublicFormAccessUrl(
       prefill_preconfirmation_first_course_option,
       prefill_preconfirmation_second_course_option,
       prefill_confirmation_first_course_option,
-      prefill_confirmation_second_course_option
+      prefill_confirmation_second_course_option,
+      prefill_underage,
+      prefill_underage_reference_date
     `)
     .eq("id", formId)
     .maybeSingle<PublicFormRow>();
@@ -340,6 +344,13 @@ function buildPublicFormAccessUrl(
             );
           }
         }
+
+        if (form.prefill_underage && form.prefill_underage_reference_date && fechaNacimiento) {
+          const esMenor = esMenorDeEdad(fechaNacimiento, form.prefill_underage_reference_date);
+          if (esMenor !== null) {
+            url.searchParams.set(form.prefill_underage, esMenor ? "Sí" : "No");
+          }
+        }
       }
     }
 
@@ -429,6 +440,25 @@ function calcularCurso(fechaNacimientoIso: string, ahora: Date): Curso | null {
     default:
       return null;
   }
+}
+
+/**
+ * Es menor de edad si, en la fecha de referencia (el primer día del fin de
+ * semana del evento), todavía no ha cumplido 18 años.
+ */
+function esMenorDeEdad(fechaNacimientoIso: string, fechaReferenciaIso: string): boolean | null {
+  const nacimiento = fechaNacimientoIso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const referencia = fechaReferenciaIso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!nacimiento || !referencia) return null;
+
+  const [anioNac, mesNac, diaNac] = nacimiento.slice(1).map(Number);
+  const [anioRef, mesRef, diaRef] = referencia.slice(1).map(Number);
+
+  const yaCumplioDieciocho =
+    anioRef - anioNac > 18 ||
+    (anioRef - anioNac === 18 && (mesRef > mesNac || (mesRef === mesNac && diaRef >= diaNac)));
+
+  return !yaCumplioDieciocho;
 }
 
 async function sha256(value: string) {
