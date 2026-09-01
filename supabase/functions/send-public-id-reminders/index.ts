@@ -1,8 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sendGmailEmail } from "../_shared/gmail.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-manual-trigger-secret",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -13,6 +14,8 @@ const MAX_RUN_MS = 50_000;
 const SEND_CONCURRENCY = 2;
 const MIN_BATCH_MS = 800;
 const DB_PAGE_SIZE = 1000;
+// Techo para el backoff antes de reintentar un envío fallido.
+const MAX_RETRY_WAIT_MS = 15_000;
 
 type StudentRow = {
   id: string;
@@ -40,47 +43,67 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const internalEmailSecret = Deno.env.get("INTERNAL_EMAIL_FUNCTION_SECRET");
 
-    if (!supabaseUrl || !serviceRoleKey || !internalEmailSecret) {
-      console.error("Missing SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY or INTERNAL_EMAIL_FUNCTION_SECRET");
+    if (!supabaseUrl || !serviceRoleKey) {
+      console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
       return jsonResponse({ ok: false, error: "server_configuration_error" }, 500);
     }
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    // 1) Solo coordinadores autenticados pueden lanzar el envío masivo.
-    const authHeader = req.headers.get("authorization") ?? req.headers.get("Authorization") ?? "";
-    const accessToken = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
+    // 1) Solo coordinadores autenticados pueden lanzar el envío masivo,
+    // salvo que se use el secreto de disparo manual (para relanzar envíos
+    // fallidos desde el editor SQL, igual que dni-verification-cleanup).
+    const manualTriggerSecret = Deno.env.get("REMINDERS_MANUAL_TRIGGER_SECRET");
+    const providedManualSecret = req.headers.get("x-manual-trigger-secret");
+    const isManualTrigger = Boolean(
+      manualTriggerSecret && providedManualSecret && providedManualSecret === manualTriggerSecret
+    );
 
-    if (!accessToken) {
-      return jsonResponse({ ok: false, error: "missing_jwt" }, 401);
-    }
+    if (!isManualTrigger) {
+      const authHeader = req.headers.get("authorization") ?? req.headers.get("Authorization") ?? "";
+      const accessToken = authHeader.toLowerCase().startsWith("bearer ") ? authHeader.slice(7).trim() : "";
 
-    const { data: userData, error: userError } = await supabase.auth.getUser(accessToken);
+      if (!accessToken) {
+        return jsonResponse({ ok: false, error: "missing_jwt" }, 401);
+      }
 
-    if (userError || !userData?.user) {
-      return jsonResponse({ ok: false, error: "invalid_jwt" }, 401);
-    }
+      const { data: userData, error: userError } = await supabase.auth.getUser(accessToken);
 
-    const { data: profile, error: profileError } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", userData.user.id)
-      .maybeSingle();
+      if (userError || !userData?.user) {
+        return jsonResponse({ ok: false, error: "invalid_jwt" }, 401);
+      }
 
-    if (profileError) {
-      console.error("Error fetching profile:", profileError);
-      return jsonResponse({ ok: false, error: "internal_error" }, 500);
-    }
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", userData.user.id)
+        .maybeSingle();
 
-    if (profile?.role !== "coordinator") {
-      return jsonResponse({ ok: false, error: "forbidden" }, 403);
+      if (profileError) {
+        console.error("Error fetching profile:", profileError);
+        return jsonResponse({ ok: false, error: "internal_error" }, 500);
+      }
+
+      if (profile?.role !== "coordinator") {
+        return jsonResponse({ ok: false, error: "forbidden" }, 403);
+      }
     }
 
     const body = await req.json().catch(() => null);
     const rawOffset = Number(body?.offset ?? 0);
     const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? Math.floor(rawOffset) : 0;
+
+    // Filtro opcional para reenviar solo a un subconjunto de destinatarios
+    // (por ejemplo, los que fallaron en un envío masivo anterior).
+    const emailFilter = Array.isArray(body?.emails)
+      ? new Set(
+          body.emails
+            .filter((email: unknown): email is string => typeof email === "string")
+            .map((email: string) => email.trim().toLowerCase())
+            .filter(Boolean)
+        )
+      : null;
 
     // 2) Construir la lista de destinatarios (un correo por parent_email).
     const students = await fetchAllRows<StudentRow>(
@@ -142,6 +165,7 @@ Deno.serve(async (req) => {
 
     // Orden estable para que el paginado por offset entre invocaciones sea coherente.
     const recipients = [...recipientsByEmail.entries()]
+      .filter(([normalizedEmail]) => !emailFilter || emailFilter.has(normalizedEmail))
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([, recipient]) => ({
         ...recipient,
@@ -154,6 +178,7 @@ Deno.serve(async (req) => {
     let processed = 0;
     let sent = 0;
     let failed = 0;
+    const failedEmails: string[] = [];
     let nextOffset: number | null = null;
     let cursor = offset;
 
@@ -167,21 +192,20 @@ Deno.serve(async (req) => {
       const batchStartedAt = Date.now();
 
       const results = await Promise.all(
-        batch.map((recipient) =>
-          sendReminderEmail({
-            supabaseUrl,
-            serviceRoleKey,
-            internalEmailSecret,
-            appBaseUrl,
-            recipient,
-          })
-        )
+        batch.map(async (recipient) => ({
+          email: recipient.email,
+          ok: await sendReminderEmail({ appBaseUrl, recipient }),
+        }))
       );
 
-      for (const ok of results) {
+      for (const result of results) {
         processed++;
-        if (ok) sent++;
-        else failed++;
+        if (result.ok) {
+          sent++;
+        } else {
+          failed++;
+          failedEmails.push(result.email);
+        }
       }
 
       cursor += batch.length;
@@ -192,16 +216,21 @@ Deno.serve(async (req) => {
       }
     }
 
-    return jsonResponse({
+    const result = {
       ok: true,
       total_recipients: recipients.length,
       processed,
       sent,
       failed,
+      failed_emails: failedEmails,
       skipped_no_public_id: skippedNoPublicId,
       skipped_invalid_email: skippedInvalidEmail,
       next_offset: nextOffset,
-    });
+    };
+
+    console.log("send-public-id-reminders result:", result);
+
+    return jsonResponse(result);
   } catch (error) {
     console.error("Unhandled error in send-public-id-reminders:", error);
     return jsonResponse({ ok: false, error: "internal_error" }, 500);
@@ -241,15 +270,9 @@ async function fetchAllRows<T>(
 }
 
 async function sendReminderEmail({
-  supabaseUrl,
-  serviceRoleKey,
-  internalEmailSecret,
   appBaseUrl,
   recipient,
 }: {
-  supabaseUrl: string;
-  serviceRoleKey: string;
-  internalEmailSecret: string;
   appBaseUrl: string;
   recipient: Recipient;
 }): Promise<boolean> {
@@ -258,34 +281,25 @@ async function sendReminderEmail({
       ? "Identificador de acceso al portal de inscripciones"
       : "Identificadores de acceso al portal de inscripciones";
 
-  const payload = JSON.stringify({
-    to: recipient.email,
-    subject,
-    html: buildReminderHtml(recipient, appBaseUrl),
-  });
+  const html = buildReminderHtml(recipient, appBaseUrl);
 
   // Un reintento: un fallo puntual dejaría a esa familia sin sus identificadores.
+  let waitBeforeNextAttemptMs = 1000;
+
   for (let attempt = 0; attempt < 2; attempt++) {
-    if (attempt > 0) await sleep(1000);
+    if (attempt > 0) await sleep(waitBeforeNextAttemptMs);
 
     try {
-      const response = await fetch(`${supabaseUrl}/functions/v1/send-form-policy-email`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: serviceRoleKey,
-          Authorization: `Bearer ${serviceRoleKey}`,
-          "x-internal-function-secret": internalEmailSecret,
-        },
-        body: payload,
-      });
-
-      const result = await response.json().catch(() => null);
-
-      if (response.ok && result?.ok) return true;
-
-      console.error(`Error sending reminder email to ${recipient.email}:`, result);
+      await sendGmailEmail({ to: recipient.email, subject, html });
+      return true;
     } catch (error) {
+      // Si el error trae su propio tiempo de espera recomendado (p. ej. un
+      // límite de peticiones), lo respetamos en vez de reintentar a ciegas.
+      const suggestedWaitMs = (error as { retryAfterMs?: unknown })?.retryAfterMs;
+      if (typeof suggestedWaitMs === "number" && Number.isFinite(suggestedWaitMs)) {
+        waitBeforeNextAttemptMs = Math.min(suggestedWaitMs + 250, MAX_RETRY_WAIT_MS);
+      }
+
       console.error(`Error sending reminder email to ${recipient.email}:`, error);
     }
   }

@@ -59,11 +59,13 @@ export default function AdminPanel({
 
   const [remindersModalOpen, setRemindersModalOpen] = useState(false);
   const [sendingReminders, setSendingReminders] = useState(false);
+  const [retryingReminders, setRetryingReminders] = useState(false);
   const [remindersError, setRemindersError] = useState('');
   const [remindersResult, setRemindersResult] = useState<{
     sent: number;
     failed: number;
     skippedStudents: number;
+    retried: number;
   } | null>(null);
 
   const [saving, setSaving] = useState(false);
@@ -1131,20 +1133,22 @@ export default function AdminPanel({
 
   const sendPublicIdReminders = async () => {
     setSendingReminders(true);
+    setRetryingReminders(false);
     setRemindersError('');
     setRemindersResult(null);
 
-    try {
+    // Envía a `emails` (o a todos si se omite), paginando con next_offset
+    // hasta que la función confirma que no queda nada pendiente.
+    const runReminderPass = async (emails?: string[]) => {
       let offset = 0;
       let sent = 0;
       let failed = 0;
       let skippedStudents = 0;
+      const failedEmails: string[] = [];
 
-      // La función procesa por lotes para no agotar el tiempo de ejecución:
-      // devuelve next_offset mientras queden destinatarios pendientes.
       while (true) {
         const { data, error } = await supabase.functions.invoke('send-public-id-reminders', {
-          body: { offset },
+          body: emails ? { offset, emails } : { offset },
         });
 
         if (error) {
@@ -1164,6 +1168,7 @@ export default function AdminPanel({
         sent += data.sent ?? 0;
         failed += data.failed ?? 0;
         skippedStudents = (data.skipped_no_public_id ?? 0) + (data.skipped_invalid_email ?? 0);
+        if (Array.isArray(data.failed_emails)) failedEmails.push(...data.failed_emails);
 
         const nextOffset = data.next_offset;
 
@@ -1172,7 +1177,28 @@ export default function AdminPanel({
         offset = nextOffset;
       }
 
-      setRemindersResult({ sent, failed, skippedStudents });
+      return { sent, failed, skippedStudents, failedEmails };
+    };
+
+    try {
+      const first = await runReminderPass();
+
+      let sent = first.sent;
+      let failed = first.failed;
+      let retried = 0;
+
+      // Si algún correo falla (p. ej. un fallo de red puntual), se reintenta
+      // automáticamente una vez más solo para esos destinatarios: no hace
+      // falta revisar logs ni relanzar nada a mano.
+      if (first.failedEmails.length > 0) {
+        setRetryingReminders(true);
+        const retry = await runReminderPass(first.failedEmails);
+        sent += retry.sent;
+        failed = retry.failed;
+        retried = retry.sent;
+      }
+
+      setRemindersResult({ sent, failed, skippedStudents: first.skippedStudents, retried });
       setRemindersModalOpen(false);
     } catch (err) {
       console.error(err);
@@ -1181,6 +1207,7 @@ export default function AdminPanel({
       );
     } finally {
       setSendingReminders(false);
+      setRetryingReminders(false);
     }
   };
 
@@ -1503,7 +1530,11 @@ export default function AdminPanel({
               className="bg-indigo-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-60 transition-all flex items-center gap-2 shadow-lg shadow-indigo-100"
             >
               <Mail className="w-4 h-4" />
-              {sendingReminders ? 'Enviando correos...' : 'Recordar identificadores'}
+              {sendingReminders
+                ? retryingReminders
+                  ? 'Reintentando pendientes...'
+                  : 'Enviando correos...'
+                : 'Recordar identificadores'}
             </button>
           </div>
 
@@ -1518,7 +1549,9 @@ export default function AdminPanel({
               <p className="font-bold mb-1">Envío completado</p>
               <p className="text-sm">
                 Correos enviados: {remindersResult.sent}
-                {remindersResult.failed > 0 && ` · Fallidos: ${remindersResult.failed}`}
+                {remindersResult.retried > 0 &&
+                  ` (${remindersResult.retried} reintentados automáticamente con éxito)`}
+                {remindersResult.failed > 0 && ` · Fallidos definitivamente: ${remindersResult.failed}`}
                 {remindersResult.skippedStudents > 0 &&
                   ` · Alumnos omitidos (sin identificador o sin email válido): ${remindersResult.skippedStudents}`}
               </p>
@@ -1729,7 +1762,11 @@ export default function AdminPanel({
                   className="flex-1 px-4 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-60 transition-all flex items-center justify-center gap-2"
                 >
                   <Mail className="w-4 h-4" />
-                  {sendingReminders ? 'Enviando...' : 'Enviar correos'}
+                  {sendingReminders
+                    ? retryingReminders
+                      ? 'Reintentando...'
+                      : 'Enviando...'
+                    : 'Enviar correos'}
                 </button>
               </div>
             </div>
