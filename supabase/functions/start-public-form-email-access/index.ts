@@ -192,8 +192,8 @@ Deno.serve(async (req) => {
         status: "verification_required",
         message:
           sendOutcome === "sent"
-            ? "Te hemos enviado un correo de verificación. Revisa tu bandeja de entrada."
-            : "Ya te habíamos enviado un correo de verificación hace unos minutos. Revisa tu bandeja de entrada.",
+            ? `Te hemos enviado un correo de verificación a ${rawEmail}. Revisa tu bandeja de entrada.`
+            : `Ya te habíamos enviado un correo de verificación a ${rawEmail} hace unos minutos. Revisa tu bandeja de entrada.`,
       },
       200
     );

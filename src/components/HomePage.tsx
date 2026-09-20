@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { X, Mail, Lock, AlertCircle, ShieldCheck } from 'lucide-react';
+import { X, Mail, Lock, AlertCircle, ShieldCheck, UserRound, Globe } from 'lucide-react';
 
 import { supabase } from '../lib/supabaseClient';
 import { isFormCurrentlyOpen } from '../types';
-import FormCard from './FormCard';
+import FormsSection from './FormsSection';
 import DniVerificationGate from './DniVerificationGate';
 
 import type {
@@ -19,6 +19,8 @@ export default function HomePage() {
   const [publicId, setPublicId] = useState('');
   const [publicForms, setPublicForms] = useState<PublicHomeForm[]>([]);
   const [restrictedForms, setRestrictedForms] = useState<PublicHomeForm[]>([]);
+  // Se activa cuando el identificador ha sido verificado, aunque no tenga formularios
+  const [accessVerified, setAccessVerified] = useState(false);
   const [loadingPublic, setLoadingPublic] = useState(true);
   const [checkingAccess, setCheckingAccess] = useState(false);
   const [error, setError] = useState('');
@@ -219,6 +221,7 @@ export default function HomePage() {
 
     if (!cleanPublicId) {
       setRestrictedForms([]);
+      setAccessVerified(false);
       setError('');
       setInfoMessage('');
       return;
@@ -247,12 +250,14 @@ export default function HomePage() {
         console.error(result);
         setError('No se pudo verificar el identificador en este momento.');
         setRestrictedForms([]);
+        setAccessVerified(false);
         setCheckingAccess(false);
         return;
       }
 
       if (result.status === 'verification_required') {
         setRestrictedForms([]);
+        setAccessVerified(false);
         setInfoMessage(
           result.message ??
             'Te hemos enviado un correo de verificación. Revisa tu bandeja de entrada.'
@@ -263,6 +268,7 @@ export default function HomePage() {
 
       if (result.status === 'not_found') {
         setRestrictedForms([]);
+        setAccessVerified(false);
         setError('No se ha encontrado ningún acceso asociado a ese identificador.');
         setCheckingAccess(false);
         return;
@@ -273,11 +279,13 @@ export default function HomePage() {
       );
 
       setRestrictedForms(normalizedRestricted);
+      setAccessVerified(true);
       setCheckingAccess(false);
     } catch (err) {
       console.error(err);
       setError('Error al verificar el acceso.');
       setRestrictedForms([]);
+      setAccessVerified(false);
       setCheckingAccess(false);
     }
   };
@@ -287,15 +295,13 @@ export default function HomePage() {
     await checkAccessByPublicId(publicId);
   };
 
-  const mergedForms = [...publicForms, ...restrictedForms].filter(
-    (form, index, arr) => arr.findIndex((f) => f.id === form.id) === index
-  );
+  const splitByAvailability = (forms: PublicHomeForm[]) => ({
+    available: forms.filter((form) => !isFormUpcoming(form) && isFormCurrentlyOpen(form)),
+    upcoming: forms.filter((form) => isFormUpcoming(form)),
+  });
 
-  const availableNowForms = mergedForms.filter(
-    (form) => !isFormUpcoming(form) && isFormCurrentlyOpen(form)
-  );
-
-  const upcomingForms = mergedForms.filter((form) => isFormUpcoming(form));
+  const myForms = splitByAvailability(restrictedForms);
+  const openForms = splitByAvailability(publicForms);
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
@@ -371,73 +377,30 @@ export default function HomePage() {
         )}
       </div>
 
-      {loadingPublic ? (
-        <div className="text-center py-20 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
-          <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-slate-500 font-medium">Cargando formularios...</p>
-        </div>
-      ) : (
-        <>
-          {availableNowForms.length > 0 ? (
-            <motion.div
-              key="results"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8"
-            >
-              {availableNowForms.map((form) => (
-                <FormCard
-                    key={form.id}
-                    form={form}
-                    onAccessClick={form.access_type === 'public' ? handleFormAccessClick : undefined}
-                  />
-              ))}
-            </motion.div>
-          ) : upcomingForms.length === 0 ? (
-            <motion.div
-              key="empty"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="text-center py-20 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200"
-            >
-              <div className="bg-white w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
-                <AlertCircle className="w-8 h-8 text-slate-300" />
-              </div>
+      <div className="space-y-16">
+        {accessVerified && (
+          <FormsSection
+            title="Tus formularios"
+            description="Formularios asociados a tu identificador. Se abrirán con tus datos ya rellenados."
+            icon={UserRound}
+            availableForms={myForms.available}
+            upcomingForms={myForms.upcoming}
+            emptyMessage="No tienes formularios asignados en este momento."
+          />
+        )}
 
-              <p className="text-slate-500 font-medium">
-                No hay formularios activos disponibles en este momento.
-              </p>
-            </motion.div>
-          ) : null}
+        <FormsSection
+          title="Formularios públicos"
+          description="Formularios abiertos a todo el mundo. No necesitas identificador para acceder."
+          icon={Globe}
+          availableForms={openForms.available}
+          upcomingForms={openForms.upcoming}
+          emptyMessage="No hay formularios públicos disponibles en este momento."
+          loading={loadingPublic}
+          onAccessClick={handleFormAccessClick}
+        />
+      </div>
 
-          {upcomingForms.length > 0 && (
-            <div className="mt-16">
-              <motion.h2
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="text-3xl font-bold text-slate-900 mb-8 tracking-tight"
-              >
-                Próximamente...
-              </motion.h2>
-
-              <motion.div
-                key="upcoming-results"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8"
-              >
-                {upcomingForms.map((form) => (
-                  <FormCard
-                    key={form.id}
-                    form={form}
-                    onAccessClick={form.access_type === 'public' ? handleFormAccessClick : undefined}
-                  />
-                ))}
-              </motion.div>
-            </div>
-          )}
-        </>
-      )}
       {selectedPublicForm && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4">
           <motion.div

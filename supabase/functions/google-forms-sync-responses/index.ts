@@ -13,6 +13,7 @@ type GoogleOAuthTokenRow = {
 type RegistrationFormRow = {
   id: string
   google_form_id: string | null
+  active: boolean
 }
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -159,11 +160,12 @@ Deno.serve(async (req) => {
 
     let registrationFormId: string | null = registrationFormIdFromBody || null
     let googleFormId: string | null = googleFormIdFromBody || null
+    let registrationForm: RegistrationFormRow | null = null
 
     if (!googleFormId && registrationFormId) {
       const { data: formRow, error: formError } = await supabase
         .from('registration_forms')
-        .select('id, google_form_id')
+        .select('id, google_form_id, active')
         .eq('id', registrationFormId)
         .single()
 
@@ -171,13 +173,14 @@ Deno.serve(async (req) => {
         throw new Error('No se pudo resolver google_form_id desde registration_form_id.')
       }
 
+      registrationForm = formRow as RegistrationFormRow
       googleFormId = formRow.google_form_id
     }
 
-    if (!registrationFormId && googleFormId) {
+    if (!registrationForm && googleFormId) {
       const { data: formRow, error: formError } = await supabase
         .from('registration_forms')
-        .select('id, google_form_id')
+        .select('id, google_form_id, active')
         .eq('google_form_id', googleFormId)
         .maybeSingle()
 
@@ -185,11 +188,29 @@ Deno.serve(async (req) => {
         throw formError
       }
 
-      registrationFormId = formRow?.id ?? null
+      registrationForm = (formRow as RegistrationFormRow | null) ?? null
+      registrationFormId = registrationForm?.id ?? registrationFormId
     }
 
     if (!googleFormId) {
       throw new Error('Debes enviar google_form_id o registration_form_id.')
+    }
+
+    // El seguimiento solo aplica a formularios activos. Las respuestas de un
+    // formulario inactivo (cerrado o desactivado a mano) se quedan tal cual en
+    // Google Forms, sin validar, sin correos y sin borrar. Si se reactiva, la
+    // siguiente sincronización las recogerá.
+    if (registrationForm && registrationForm.active === false) {
+      return jsonResponse({
+        ok: true,
+        skipped: 'inactive_form',
+        google_form_id: googleFormId,
+        registration_form_id: registrationFormId,
+        fetched: 0,
+        inserted: 0,
+        already_existing: 0,
+        oauth_google_email: oauthToken.google_email,
+      })
     }
 
     const responses = await listFormResponses(refreshed.accessToken, googleFormId)

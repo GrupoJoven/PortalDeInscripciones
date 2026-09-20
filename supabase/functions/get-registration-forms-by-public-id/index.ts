@@ -138,7 +138,7 @@ Deno.serve(async (req) => {
           status: "verification_required",
           forms: [],
           message:
-            "Te hemos enviado un correo de verificación. Hasta que no pulses el enlace del email no podrás acceder a los formularios.",
+            `Te hemos enviado un correo de verificación a ${studentRow.parent_email}. Hasta que no pulses el enlace del email no podrás acceder a los formularios.`,
         },
         200
       );

@@ -41,9 +41,15 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const GOOGLE_OAUTH_CLIENT_ID = Deno.env.get('GOOGLE_OAUTH_CLIENT_ID')!
 const GOOGLE_OAUTH_CLIENT_SECRET = Deno.env.get('GOOGLE_OAUTH_CLIENT_SECRET')!
 const GOOGLE_FORMS_WATCH_TOPIC = Deno.env.get('GOOGLE_FORMS_WATCH_TOPIC')!
+// Solo necesario si se pide sincronizar respuestas al recrear un watch
+const INTERNAL_FUNCTIONS_SECRET = Deno.env.get('INTERNAL_FUNCTIONS_SECRET')
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GOOGLE_FORMS_API_BASE = 'https://forms.googleapis.com/v1'
+const SUPABASE_FUNCTIONS_BASE_URL = `${SUPABASE_URL}/functions/v1`
+// Los watches de Google Forms caducan a los 7 días; se renuevan cuando les
+// queda menos de esto. El cron que llama a esta función debe ejecutarse con
+// más frecuencia que este margen.
 const WATCH_RENEWAL_THRESHOLD_MS = 24 * 60 * 60 * 1000
 
 function requireEnv(value: string | undefined, name: string) {
@@ -58,6 +64,13 @@ function needsRenewal(expiresAt: string | null | undefined): boolean {
   const expiresMs = new Date(expiresAt).getTime()
   if (Number.isNaN(expiresMs)) return true
   return expiresMs - Date.now() <= WATCH_RENEWAL_THRESHOLD_MS
+}
+
+function isExpired(expiresAt: string | null | undefined): boolean {
+  if (!expiresAt) return true
+  const expiresMs = new Date(expiresAt).getTime()
+  if (Number.isNaN(expiresMs)) return true
+  return expiresMs <= Date.now()
 }
 
 async function getGoogleAccessTokenFromRefreshToken(params: {
@@ -132,6 +145,101 @@ async function createGoogleFormsWatch(params: {
   return await resp.json()
 }
 
+/**
+ * Extiende un watch vivo otros 7 días. Google solo admite un watch por
+ * formulario y tipo de evento, así que mientras el actual siga activo no se
+ * puede crear otro: hay que renovarlo. Devuelve null si Google ya no lo
+ * conoce (NOT_FOUND, típicamente porque caducó), en cuyo caso toca crearlo.
+ */
+async function renewGoogleFormsWatch(params: {
+  accessToken: string
+  googleFormId: string
+  watchId: string
+}) {
+  const resp = await fetch(
+    `${GOOGLE_FORMS_API_BASE}/forms/${encodeURIComponent(params.googleFormId)}/watches/${encodeURIComponent(params.watchId)}:renew`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${params.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    }
+  )
+
+  if (resp.status === 404) {
+    return null
+  }
+
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(`Error renovando watch ${params.watchId} de ${params.googleFormId}: ${resp.status} ${text}`)
+  }
+
+  return await resp.json()
+}
+
+/**
+ * Descarga las respuestas del formulario que no estén ya en
+ * google_form_processed_responses. Se usa al recrear un watch: si ha habido un
+ * hueco sin watch, Google no ha avisado de las respuestas enviadas en ese
+ * tiempo y hay que recuperarlas a mano.
+ */
+async function syncFormResponses(registrationFormId: string) {
+  if (!INTERNAL_FUNCTIONS_SECRET) {
+    throw new Error('Falta INTERNAL_FUNCTIONS_SECRET para sincronizar respuestas.')
+  }
+
+  const resp = await fetch(`${SUPABASE_FUNCTIONS_BASE_URL}/google-forms-sync-responses`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-internal-secret': INTERNAL_FUNCTIONS_SECRET,
+    },
+    body: JSON.stringify({ registration_form_id: registrationFormId }),
+  })
+
+  const json = await resp.json().catch(() => null)
+
+  if (!resp.ok || json?.ok === false) {
+    throw new Error(`Error sincronizando respuestas: ${resp.status} ${JSON.stringify(json)}`)
+  }
+
+  return json
+}
+
+/**
+ * Procesa las respuestas pendientes por lotes hasta vaciar la cola (con un
+ * tope por si algo se queda atascado). Devuelve el resumen de cada lote.
+ */
+async function processPendingResponses() {
+  const batchSize = 50
+  const maxBatches = 10
+  const batches: unknown[] = []
+
+  for (let i = 0; i < maxBatches; i++) {
+    const resp = await fetch(`${SUPABASE_FUNCTIONS_BASE_URL}/google-forms-process-responses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ limit: batchSize }),
+    })
+
+    const json = await resp.json().catch(() => null)
+
+    if (!resp.ok || json?.ok === false) {
+      throw new Error(`Error procesando respuestas pendientes: ${resp.status} ${JSON.stringify(json)}`)
+    }
+
+    batches.push(json)
+
+    const handled = Number(json?.processed ?? 0) + Number(json?.processing_error ?? 0)
+    if (handled < batchSize) break
+  }
+
+  return batches
+}
+
 async function markExistingWatchesAsReplaced(
   supabase: ReturnType<typeof createClient>,
   registrationFormId: string
@@ -163,6 +271,9 @@ Deno.serve(async (req) => {
     const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {}
     const registrationFormId =
       typeof body?.registration_form_id === 'string' ? body.registration_form_id.trim() : ''
+    // Lo activa el cron: si hay que crear un watch nuevo es que ha habido un
+    // hueco sin avisos, y conviene recuperar las respuestas de ese hueco.
+    const syncResponsesOnCreate = body?.sync_responses_on_create === true
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
@@ -204,10 +315,14 @@ Deno.serve(async (req) => {
       throw oauthUpdateError
     }
 
+    // Solo formularios activos: un formulario cerrado o desactivado no debe
+    // seguir recibiendo seguimiento (ni renovar su watch, ni recuperar y
+    // procesar respuestas atrasadas).
     let formsQuery = supabase
       .from('registration_forms')
       .select('id, title, google_form_id, google_form_watch_enabled')
       .eq('google_form_watch_enabled', true)
+      .eq('active', true)
       .order('created_at', { ascending: false })
 
     if (registrationFormId) {
@@ -225,7 +340,7 @@ Deno.serve(async (req) => {
     if (formsRows.length === 0) {
       return jsonResponse({
         ok: true,
-        message: 'No hay formularios con watch habilitado.',
+        message: 'No hay formularios activos con watch habilitado.',
         processed: 0,
         created: 0,
         skipped: 0,
@@ -234,8 +349,10 @@ Deno.serve(async (req) => {
     }
 
     let created = 0
+    let renewed = 0
     let skipped = 0
     const errors: Array<{ registration_form_id: string; title: string; error: string }> = []
+    const synced: Array<{ registration_form_id: string; title: string; result: unknown }> = []
 
     for (const form of formsRows) {
       try {
@@ -264,6 +381,35 @@ Deno.serve(async (req) => {
         if (activeWatch && !needsRenewal(activeWatch.expires_at)) {
           skipped += 1
           continue
+        }
+
+        // Watch vivo pero a punto de caducar: renovarlo. Si Google ya no lo
+        // conoce, se sigue adelante y se crea uno nuevo.
+        if (activeWatch && !isExpired(activeWatch.expires_at)) {
+          const renewResponse = await renewGoogleFormsWatch({
+            accessToken: refreshed.accessToken,
+            googleFormId: form.google_form_id.trim(),
+            watchId: activeWatch.watch_id,
+          })
+
+          const renewedExpireTime = renewResponse?.expireTime ?? null
+
+          if (renewedExpireTime) {
+            const { error: renewUpdateError } = await supabase
+              .from('google_form_watches')
+              .update({
+                expires_at: renewedExpireTime,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', activeWatch.id)
+
+            if (renewUpdateError) {
+              throw renewUpdateError
+            }
+
+            renewed += 1
+            continue
+          }
         }
 
         const watchResponse = await createGoogleFormsWatch({
@@ -299,6 +445,11 @@ Deno.serve(async (req) => {
         }
 
         created += 1
+
+        if (syncResponsesOnCreate) {
+          const syncResult = await syncFormResponses(form.id)
+          synced.push({ registration_form_id: form.id, title: form.title, result: syncResult })
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
 
@@ -310,11 +461,29 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Una sola pasada de procesado para todo lo recuperado
+    let processResult: unknown = null
+
+    if (synced.length > 0) {
+      try {
+        processResult = await processPendingResponses()
+      } catch (err) {
+        errors.push({
+          registration_form_id: '',
+          title: 'google-forms-process-responses',
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+
     return jsonResponse({
       ok: errors.length === 0,
       processed: formsRows.length,
       created,
+      renewed,
       skipped,
+      synced,
+      process_result: processResult,
       oauth_google_email: oauthToken.google_email,
       errors,
     })
