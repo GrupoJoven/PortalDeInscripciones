@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { X, Mail, Lock, AlertCircle, ShieldCheck, UserRound, Globe } from 'lucide-react';
+import { X, Mail, Lock, AlertCircle, ShieldCheck, UserRound, Globe, BookOpen } from 'lucide-react';
 
 import { supabase } from '../lib/supabaseClient';
 import { isFormCurrentlyOpen } from '../types';
@@ -14,6 +14,8 @@ import type {
   StartPublicFormEmailAccessResponse,
   DniExtractedData,
 } from '../types';
+
+const PORTAL_GUIDE_URL = 'https://sanpas.es/wp-content/uploads/2026/09/GUIA-INSCRIPCIONES.pdf';
 
 export default function HomePage() {
   const [publicId, setPublicId] = useState('');
@@ -322,6 +324,19 @@ export default function HomePage() {
         >
           Accede a los formularios públicos o introduce tu identificador para ver los formularios disponibles para ti.
         </motion.p>
+
+        <motion.a
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          href={PORTAL_GUIDE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-8 inline-flex items-center justify-center gap-3 bg-indigo-600 text-white px-8 py-4 rounded-2xl text-lg font-extrabold tracking-wide text-center shadow-lg shadow-indigo-200 hover:bg-indigo-700 hover:-translate-y-0.5 transition-all"
+        >
+          <BookOpen className="w-6 h-6 flex-shrink-0" />
+          GUÍA DEL PORTAL DE INSCRIPCIONES
+        </motion.a>
       </div>
 
       <div className="max-w-md mx-auto mb-16">
