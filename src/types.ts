@@ -116,6 +116,8 @@ export interface PublicHomeForm {
   close_date: string | null;
   access_type: 'public' | 'restricted';
   dni_verification_enabled?: boolean;
+  /** Solo en "Tus formularios": hay una respuesta validada con su identificador. */
+  already_answered?: boolean;
 };
 
 export interface PublicFormsResponse {

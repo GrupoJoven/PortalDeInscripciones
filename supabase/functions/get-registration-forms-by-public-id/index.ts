@@ -16,6 +16,7 @@ type RestrictedForm = {
   open_date: string | null;
   close_date: string | null;
   access_type: "restricted";
+  already_answered: boolean;
 };
 
 type StudentRow = {
@@ -218,6 +219,8 @@ async function getRestrictedFormsForStudent(
     throw formsError;
   }
 
+  const answeredFormIds = await getAnsweredFormIds(supabase, formIds, publicId);
+
   const now = Date.now();
 
   const forms: RestrictedForm[] = (formsData ?? [])
@@ -257,6 +260,7 @@ async function getRestrictedFormsForStudent(
       open_date: form.open_date,
       close_date: form.close_date,
       access_type: "restricted",
+      already_answered: answeredFormIds.has(form.id),
     }))
     .sort((a, b) => {
       const aTime = a.open_date ? new Date(a.open_date).getTime() : 0;
@@ -265,6 +269,49 @@ async function getRestrictedFormsForStudent(
     });
 
   return forms;
+}
+
+/**
+ * Formularios que esta persona ya ha respondido: los que tienen alguna
+ * respuesta validada (validated_ok) en la que una de las respuestas es
+ * exactamente su identificador. El ILIKE sobre el texto de `answers` acota en
+ * la base de datos; la comprobación exacta evita coincidencias parciales.
+ *
+ * Es solo un aviso en la portada, así que si la consulta falla se devuelve
+ * un conjunto vacío en lugar de romper el acceso a los formularios.
+ */
+async function getAnsweredFormIds(
+  supabase: ReturnType<typeof createClient>,
+  formIds: string[],
+  publicId: string
+): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from("google_form_processed_responses")
+    .select("registration_form_id, answers:raw_response->answers")
+    .in("registration_form_id", formIds)
+    .eq("processing_status", "validated_ok")
+    .ilike("raw_response->>answers", `%${publicId}%`);
+
+  if (error) {
+    console.error("Error fetching google_form_processed_responses:", error);
+    return new Set();
+  }
+
+  const answered = new Set<string>();
+
+  for (const row of data ?? []) {
+    if (!row.registration_form_id) continue;
+
+    const values = Object.values(row.answers ?? {}).flatMap(
+      (answer: any) => answer?.textAnswers?.answers ?? []
+    );
+
+    if (values.some((value: any) => String(value?.value ?? "").trim().toUpperCase() === publicId)) {
+      answered.add(row.registration_form_id);
+    }
+  }
+
+  return answered;
 }
 
 async function ensureVerificationEmailSent({

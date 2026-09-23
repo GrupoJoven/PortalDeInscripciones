@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { ExternalLink, Calendar, FileText, ShieldCheck, IdCard } from 'lucide-react';
+import { ExternalLink, Calendar, FileText, ShieldCheck, IdCard, CircleCheck } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -13,6 +13,7 @@ type FormCardProps = {
 
 export default function FormCard({ form, onAccessClick }: FormCardProps) {
   const isOpen = isFormCurrentlyOpen(form);
+  const alreadyAnswered = isOpen && form.already_answered === true;
 
   const handleClick = () => {
     if (onAccessClick) {
@@ -37,94 +38,111 @@ export default function FormCard({ form, onAccessClick }: FormCardProps) {
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all group"
+      className="flex flex-col gap-3"
     >
-      <div className="flex justify-between items-start mb-4 gap-3">
-        <h3 className="min-w-0 flex-1 break-words text-xl font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">
-          {form.title}
-        </h3>
+      <div
+        className={`flex-1 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all group ${
+          alreadyAnswered ? 'opacity-60 grayscale hover:opacity-100 hover:grayscale-0' : ''
+        }`}
+      >
+        <div className="flex justify-between items-start mb-4 gap-3">
+          <h3 className="min-w-0 flex-1 break-words text-xl font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">
+            {form.title}
+          </h3>
 
-        <div className="bg-green-50 text-green-700 text-xs font-bold px-2.5 py-1 rounded-full uppercase tracking-wider whitespace-nowrap">
-          Activo
+          <div className="bg-green-50 text-green-700 text-xs font-bold px-2.5 py-1 rounded-full uppercase tracking-wider whitespace-nowrap">
+            Activo
+          </div>
         </div>
-      </div>
 
-      <p className="text-slate-600 mb-4 max-h-32 overflow-y-auto">
-        {form.description || 'Sin descripción disponible.'}
-      </p>
+        <p className="text-slate-600 mb-4 max-h-32 overflow-y-auto">
+          {form.description || 'Sin descripción disponible.'}
+        </p>
 
-      {form.dni_verification_enabled && (
-        <div className="mb-4 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
-          <IdCard className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
-          <span className="text-xs font-semibold text-amber-800">
-            Requiere verificar el DNI con el móvil
-          </span>
-        </div>
-      )}
-
-      <div className="space-y-3 mb-6">
-        {form.open_date && (
-          <div className="flex items-center gap-2 text-sm text-slate-500">
-            <Calendar className="w-4 h-4" />
-            <span>
-              Abre: {format(parseISO(form.open_date), 'PPP p', { locale: es })}
+        {form.dni_verification_enabled && (
+          <div className="mb-4 flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
+            <IdCard className="w-4 h-4 text-amber-700 flex-shrink-0 mt-0.5" />
+            <span className="text-xs font-semibold text-amber-800">
+              Requiere verificar el DNI con el móvil
             </span>
           </div>
         )}
 
-        {form.close_date && (
-          <div className="flex items-center gap-2 text-sm text-slate-500">
-            <Calendar className="w-4 h-4" />
-            <span>
-              Cierra: {format(parseISO(form.close_date), 'PPP p', { locale: es })}
-            </span>
-          </div>
-        )}
-      </div>
+        <div className="space-y-3 mb-6">
+          {form.open_date && (
+            <div className="flex items-center gap-2 text-sm text-slate-500">
+              <Calendar className="w-4 h-4" />
+              <span>
+                Abre: {format(parseISO(form.open_date), 'PPP p', { locale: es })}
+              </span>
+            </div>
+          )}
 
-      {isOpen && (
-        <div className="space-y-3">
-          <button
-            type="button"
-            onClick={handleClick}
-            className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all shadow-indigo-100 shadow-lg group-hover:-translate-y-0.5"
-          >
-            Acceder al Formulario
-            <ExternalLink className="w-4 h-4" />
-          </button>
-
-          {(form.circular_url || form.authorization_url) && (
-            <div className="grid grid-cols-1 gap-3">
-              {form.circular_url && (
-                <button
-                  type="button"
-                  onClick={handleCircularClick}
-                  className="w-full bg-slate-100 text-slate-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200 transition-all"
-                >
-                  Acceder a circular
-                  <FileText className="w-4 h-4" />
-                </button>
-              )}
-
-              {form.authorization_url && (
-                <button
-                  type="button"
-                  onClick={handleAuthorizationClick}
-                  className="w-full bg-slate-100 text-slate-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200 transition-all"
-                >
-                  Acceder a autorización
-                  <ShieldCheck className="w-4 h-4" />
-                </button>
-              )}
+          {form.close_date && (
+            <div className="flex items-center gap-2 text-sm text-slate-500">
+              <Calendar className="w-4 h-4" />
+              <span>
+                Cierra: {format(parseISO(form.close_date), 'PPP p', { locale: es })}
+              </span>
             </div>
           )}
         </div>
-      )}
 
-      {!isOpen && (
-        <div className="text-sm text-slate-500 font-medium">
-          Disponible próximamente
-        </div>
+        {isOpen && (
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={handleClick}
+              className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-700 transition-all shadow-indigo-100 shadow-lg group-hover:-translate-y-0.5"
+            >
+              Acceder al Formulario
+              <ExternalLink className="w-4 h-4" />
+            </button>
+
+            {(form.circular_url || form.authorization_url) && (
+              <div className="grid grid-cols-1 gap-3">
+                {form.circular_url && (
+                  <button
+                    type="button"
+                    onClick={handleCircularClick}
+                    className="w-full bg-slate-100 text-slate-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200 transition-all"
+                  >
+                    Acceder a circular
+                    <FileText className="w-4 h-4" />
+                  </button>
+                )}
+
+                {form.authorization_url && (
+                  <button
+                    type="button"
+                    onClick={handleAuthorizationClick}
+                    className="w-full bg-slate-100 text-slate-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200 transition-all"
+                  >
+                    Acceder a autorización
+                    <ShieldCheck className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!isOpen && (
+          <div className="text-sm text-slate-500 font-medium">
+            Disponible próximamente
+          </div>
+        )}
+      </div>
+
+      {alreadyAnswered && (
+        <p className="flex items-start gap-2 px-1 text-sm text-slate-600">
+          <CircleCheck className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
+          <span>
+            Pensamos que ya has respondido este formulario, si crees que no es así o quieres
+            cambiar tus respuestas, vuelve a rellenarlo pinchando en él y nos quedaremos siempre
+            con la respuesta más reciente.
+          </span>
+        </p>
       )}
     </motion.div>
   );
