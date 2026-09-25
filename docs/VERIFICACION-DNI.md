@@ -424,44 +424,23 @@ añade un secreto más junto a los del paso 5:
 
 ### 9.3 Programar que se ejecute sola
 
-Si ya tenías programado el `limpiar-sesiones-dni` de una versión anterior de
-esta guía, quítalo primero (en el editor SQL):
+Sigue los pasos de `scripts/cron-limpiar-fotos-dni.sql` en el editor SQL. El
+script guarda el valor de `DNI_CLEANUP_SECRET` también en Supabase Vault y
+programa el cron `limpiar-fotos-dni` (cada 15 minutos) para que lo lea de ahí,
+así el secreto no queda escrito en claro dentro del cron y se puede volver a
+consultar si hace falta.
 
-```sql
-select cron.unschedule('limpiar-sesiones-dni');
-```
+> **Historial:** antes este paso escribía el secreto a mano dentro del cron.
+> En algún momento dejó de coincidir con `DNI_CLEANUP_SECRET` y la limpieza
+> estuvo semanas respondiendo 401 sin borrar nada. Como el valor de un secreto
+> de Edge Functions no se puede volver a leer, se cambió por la versión con
+> Vault. Si alguna vez cambias `DNI_CLEANUP_SECRET`, vuelve a ejecutar el
+> bloque 1 del script con el valor nuevo.
 
-Y programa la limpieza de verdad, cambiando `TU_SECRETO_AQUI` por el valor
-exacto que has puesto en `DNI_CLEANUP_SECRET`:
-
-```sql
-create extension if not exists pg_cron;
-create extension if not exists pg_net;
-
-select cron.schedule(
-  'limpiar-fotos-dni',
-  '*/15 * * * *',
-  $$
-  select net.http_post(
-    url := 'https://pqycvrpdyebshkfaxzmi.supabase.co/functions/v1/dni-verification-cleanup',
-    headers := jsonb_build_object(
-      'Content-Type', 'application/json',
-      'x-cleanup-secret', 'TU_SECRETO_AQUI'
-    ),
-    body := '{}'::jsonb
-  );
-  $$
-);
-```
-
-**Comprobación:** espera 15 minutos (o cambia momentáneamente el intervalo a
-`* * * * *` para probarlo ya, y vuelve a `*/15 * * * *` después) y mira los
-logs de la función en
-https://supabase.com/dashboard/project/pqycvrpdyebshkfaxzmi/functions —
-debe aparecer una ejecución con `fotos_encontradas` y `fotos_borradas`. Si
-tienes fotos de pruebas antiguas acumuladas en el bucket de antes de aplicar
-este paso, esta misma limpieza las recogerá en cuanto sus sesiones lleven más
-de 30 minutos caducadas (todas las de pruebas ya llevan mucho más).
+**Comprobación:** el bloque 3 del script lanza una limpieza al momento; su
+respuesta en `net._http_response` debe ser `200` con `fotos_encontradas` y
+`fotos_borradas`. El script incluye también las consultas para confirmar que
+no quedan sesiones caducadas ni fotos huérfanas.
 
 ---
 
