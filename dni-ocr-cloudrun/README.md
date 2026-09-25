@@ -114,6 +114,14 @@ necesitar PaddleOCR instalado:
 python3 test_mapping.py
 ```
 
+`test_domicilio.py` prueba la lectura del domicilio del reverso con bloques de
+OCR simulados (etiqueta mal leída, foto girada, calle partida en dos, ruido
+junto a la provincia, O/0 confundidas), también sin PaddleOCR:
+
+```bash
+python3 test_domicilio.py
+```
+
 ## Despliegue en Google Cloud Run
 
 ```bash

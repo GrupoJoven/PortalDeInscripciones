@@ -47,6 +47,28 @@ OCR_MRZ_MAP = str.maketrans({
     "_": "<",
 })
 
+# Provincias del domicilio, sin acentos y en mayúsculas (se comparan contra el
+# texto normalizado igual). Incluye las formas cooficiales que puede imprimir
+# el DNI y basta con la palabra principal ("CORUNA" cubre "A CORUÑA").
+PROVINCIAS = (
+    "ALAVA", "ARABA", "ALBACETE", "ALICANTE", "ALACANT", "ALMERIA", "ASTURIAS",
+    "AVILA", "BADAJOZ", "BALEARES", "BALEARS", "BARCELONA", "BIZKAIA", "VIZCAYA",
+    "BURGOS", "CACERES", "CADIZ", "CANTABRIA", "CASTELLON", "CASTELLO",
+    "CIUDAD REAL", "CORDOBA", "CORUNA", "CUENCA", "GIPUZKOA", "GUIPUZCOA",
+    "GIRONA", "GRANADA", "GUADALAJARA", "HUELVA", "HUESCA", "JAEN", "LEON",
+    "LLEIDA", "LUGO", "MADRID", "MALAGA", "MURCIA", "NAVARRA", "OURENSE",
+    "PALENCIA", "LAS PALMAS", "PONTEVEDRA", "RIOJA", "SALAMANCA",
+    "SANTA CRUZ DE TENERIFE", "SEGOVIA", "SEVILLA", "SORIA", "TARRAGONA",
+    "TERUEL", "TOLEDO", "VALENCIA", "VALLADOLID", "ZAMORA", "ZARAGOZA", "CEUTA",
+    "MELILLA",
+)
+
+PROVINCIA_RE = re.compile(
+    r"(?<![A-Z])(?:"
+    + "|".join(sorted(map(re.escape, PROVINCIAS), key=len, reverse=True))
+    + r")(?![A-Z])"
+)
+
 
 def strip_accents(text: str) -> str:
     return "".join(
@@ -900,7 +922,27 @@ class DNIReader:
         return float(xs.min()), float(ys.min()), float(xs.max()), float(ys.max())
 
     @staticmethod
-    def _group_lines(tokens: Sequence[OCRToken]) -> List[List[OCRToken]]:
+    def _x_overlap(a: OCRToken, b: OCRToken) -> float:
+        """Solape horizontal entre dos cajas, como fracción de la más estrecha."""
+        solape = min(a.box[2], b.box[2]) - max(a.box[0], b.box[0])
+        return max(0.0, solape) / min(a.w, b.w)
+
+    @staticmethod
+    def _group_lines(
+        tokens: Sequence[OCRToken],
+        separar_apiladas: bool = False,
+    ) -> List[List[OCRToken]]:
+        """Agrupa los bloques del OCR en líneas por su altura.
+
+        `separar_apiladas`: no mete en la misma línea dos bloques que se
+        solapan en horizontal. Dos textos de una misma línea nunca se solapan
+        así; dos líneas apiladas y alineadas a la izquierda sí. Con la foto
+        algo girada (unos 3°), la caja de un texto largo crece en altura y su
+        centro se acerca al de la línea de debajo, y sin esta comprobación el
+        domicilio salía mezclado ("VALÈNCIA C. ALEMANIA 12 P03 5", o la
+        localidad pegada a la provincia). Solo se activa para el domicilio,
+        para no cambiar cómo se leen el anverso ni la MRZ.
+        """
         if not tokens:
             return []
         sorted_tokens = sorted(tokens, key=lambda t: (t.cy, t.cx))
@@ -912,11 +954,16 @@ class DNIReader:
         for token in sorted_tokens:
             placed = False
             for idx, cy in enumerate(centers):
-                if abs(token.cy - cy) <= y_tol:
-                    lines[idx].append(token)
-                    centers[idx] = float(np.mean([t.cy for t in lines[idx]]))
-                    placed = True
-                    break
+                if abs(token.cy - cy) > y_tol:
+                    continue
+                if separar_apiladas and any(
+                    DNIReader._x_overlap(token, otro) > 0.5 for otro in lines[idx]
+                ):
+                    continue
+                lines[idx].append(token)
+                centers[idx] = float(np.mean([t.cy for t in lines[idx]]))
+                placed = True
+                break
             if not placed:
                 lines.append([token])
                 centers.append(token.cy)
@@ -1384,9 +1431,9 @@ class DNIReader:
             parents = legacy.get("padres") or parents
 
         return {
-            "domicilio": self._clean_free_text(address),
+            "domicilio": self._clean_address_text(address),
             "localidad": self._clean_place_text(city),
-            "provincia": self._clean_place_text(province),
+            "provincia": self._clean_province_text(province),
             "lugar_nacimiento": self._clean_free_text(birth_place),
             "padres": self._clean_free_text(parents),
         }
@@ -1396,7 +1443,7 @@ class DNIReader:
         tokens: Sequence[OCRToken]
     ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
 
-        grouped = self._group_lines(tokens)
+        grouped = self._group_lines(tokens, separar_apiladas=True)
 
         address_aliases = [
             "DOMICILIO",
@@ -1444,7 +1491,21 @@ class DNIReader:
 
             address = raw[etiqueta.end():].strip() if etiqueta else raw
 
-            if not address:
+            # El patrón de arriba solo reconoce la segunda mitad de la
+            # etiqueta bilingüe si el OCR la lee bien. Cuando la deforma
+            # ("DOMICILIO/DOMICHLI") o la parte en dos bloques ("DOMICILI" +
+            # "O/DOMICILI"), ese resto se tomaba como la dirección y todo se
+            # desplazaba una línea: la calle acababa en "localidad" y perdía
+            # los números. Se quitan los fragmentos que siguen pareciendo la
+            # etiqueta; la dirección real empieza por el tipo de vía ("C.",
+            # "AVDA."...), así que nunca contiene "DOMI" en esa posición.
+            address = re.sub(
+                r"^(?:[\s/:\-]*\S*DOMI\S*)+", "", address, flags=re.IGNORECASE
+            ).strip(" /:-")
+
+            # Un resto de 1-3 caracteres sin cifras junto a la etiqueta
+            # ("A", "I") es ruido del OCR, no la dirección.
+            if not address or (len(address) <= 3 and not re.search(r"\d", address)):
                 address = None
 
             # ---------------------------------------------------------
@@ -1484,6 +1545,20 @@ class DNIReader:
 
             if address is None and following:
                 address = following.pop(0)
+
+            # Una calle con el nombre largo puede llegar en dos bloques a
+            # distinta altura, y el segundo (el del número, piso y puerta)
+            # acababa como "localidad" y reducido a una letra al limpiarlo
+            # ("C. DOCTOR RODRIGUEZ FORNOS, A, VALÈNCIA"). La localidad y la
+            # provincia nunca llevan cifras, así que si la dirección no tiene
+            # ninguna y la línea siguiente sí, esa línea es su continuación.
+            if (
+                address
+                and not re.search(r"\d", address)
+                and following
+                and re.search(r"\d", following[0])
+            ):
+                address = f"{address} {following.pop(0)}"
 
             # ---------------------------------------------------------
             # 4. Siguientes líneas:
@@ -2043,6 +2118,70 @@ class DNIReader:
         result = result.strip(" /,")
         result = re.sub(r"\s+", " ", result)
         return result or None
+
+    @staticmethod
+    def _clean_address_text(text: Optional[str]) -> Optional[str]:
+        """Limpia la línea de la calle: quita ruido delante del tipo de vía y
+        corrige confusiones típicas del OCR entre la O y el 0.
+        """
+        t = DNIReader._clean_free_text(text)
+        if not t:
+            return None
+
+        # En el DNI la calle siempre empieza por la abreviatura del tipo de
+        # vía ("C.", "CRER.", "AVDA."...). Lo que haya delante, si son una o
+        # dos palabras sin cifras, es ruido ("D CRER. CAVANILLES 32") o una
+        # línea vecina que se ha colado ("VALENCIA C. TIRIG 1").
+        palabras = t.split(" ")
+        ancla = next(
+            (i for i, p in enumerate(palabras) if re.match(r"^[A-ZÇ]{1,5}\.", p)),
+            None,
+        )
+        if ancla and ancla <= 2 and not any(re.search(r"\d", p) for p in palabras[:ancla]):
+            t = " ".join(palabras[ancla:])
+
+        # "C.CIRILO AMOROS" -> "C. CIRILO AMOROS"
+        t = re.sub(r"^([A-ZÇ]{1,5}\.)(?=[A-ZÀ-ÝÇ])", r"\1 ", t)
+        # Piso: "PO4" -> "P04"
+        t = re.sub(r"\bPO(\d)\b", r"P0\1", t)
+        # Números con alguna O en medio: "1O" -> "10", "001O" -> "0010"
+        t = re.sub(
+            r"\b(?=[0-9O]*\d)[0-9O]*O[0-9O]*\b",
+            lambda m: m.group(0).replace("O", "0"),
+            t,
+        )
+        # Un 0 entre letras es una O: "L0S CENTELLES" -> "LOS CENTELLES"
+        t = re.sub(r"(?<=[A-ZÀ-Ý])0(?=[A-ZÀ-Ý])", "O", t)
+
+        return t or None
+
+    @staticmethod
+    def _clean_province_text(text: Optional[str]) -> Optional[str]:
+        """Como `_clean_place_text`, y además quita el ruido en mayúsculas que
+        el OCR lee del fondo del DNI junto a la provincia ("OSTO VALENCIA",
+        "VALENCIA LUGAE B MACME NOM"). Si hay una provincia conocida, se
+        queda solo con ella, conservando la forma bilingüe completa
+        ("VALENCIA/VALÈNCIA") y cualquier palabra pegada a ella con "/". Si no
+        reconoce ninguna, devuelve el texto tal cual.
+        """
+        t = DNIReader._clean_place_text(text)
+        if not t:
+            return t
+
+        # Misma longitud que `t` para poder recortar el original por
+        # posiciones: cada carácter se sustituye por su letra sin acento.
+        plano = "".join((strip_accents(c) or c)[0] for c in t).upper()
+        coincidencias = list(PROVINCIA_RE.finditer(plano))
+        if not coincidencias:
+            return t
+
+        inicio, fin = coincidencias[0].start(), coincidencias[-1].end()
+        while inicio > 0 and not t[inicio - 1].isspace():
+            inicio -= 1
+        while fin < len(t) and not t[fin].isspace():
+            fin += 1
+
+        return t[inicio:fin].strip(" /,") or t
 
     # -------------------------------------------------------------------------
     # Fusión y validaciones
