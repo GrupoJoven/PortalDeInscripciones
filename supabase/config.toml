@@ -583,3 +583,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/dni-verification-cleanup/deno.json"
 entrypoint = "./functions/dni-verification-cleanup/index.ts"
+
+[functions.payment-form-access]
+enabled = true
+verify_jwt = false
+import_map = "./functions/payment-form-access/deno.json"
+entrypoint = "./functions/payment-form-access/index.ts"

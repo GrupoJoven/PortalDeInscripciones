@@ -7,6 +7,7 @@ import { supabase } from '../lib/supabaseClient';
 import { isFormCurrentlyOpen } from '../types';
 import FormsSection from './FormsSection';
 import DniVerificationGate from './DniVerificationGate';
+import PaymentFormGate from './PaymentFormGate';
 
 import type {
   PublicHomeForm,
@@ -19,6 +20,9 @@ const PORTAL_GUIDE_URL = 'https://sanpas.es/wp-content/uploads/2026/09/GUIA-INSC
 
 export default function HomePage() {
   const [publicId, setPublicId] = useState('');
+  // Identificador con el que se han cargado "Tus formularios" (el del
+  // campo de texto puede haberse editado después).
+  const [verifiedPublicId, setVerifiedPublicId] = useState('');
   const [publicForms, setPublicForms] = useState<PublicHomeForm[]>([]);
   const [restrictedForms, setRestrictedForms] = useState<PublicHomeForm[]>([]);
   // Se activa cuando el identificador ha sido verificado, aunque no tenga formularios
@@ -39,6 +43,12 @@ export default function HomePage() {
   const [dniSessionToken, setDniSessionToken] = useState('');
   const [dniExtracted, setDniExtracted] = useState<DniExtractedData | null>(null);
 
+  // Paso previo de los formularios de pago (aviso + participantes)
+  const [paymentGate, setPaymentGate] = useState<{
+    form: PublicHomeForm;
+    accessPublicId?: string;
+  } | null>(null);
+
   const openPublicFormAccessModal = (form: PublicHomeForm) => {
     setSelectedPublicForm(form);
     setPublicFormEmail('');
@@ -51,6 +61,11 @@ export default function HomePage() {
    * QR; el resto van directamente al paso del correo electrónico.
    */
   const handleFormAccessClick = useCallback((form: PublicHomeForm) => {
+    if (form.form_type === 'payment') {
+      setPaymentGate({ form });
+      return;
+    }
+
     if (form.dni_verification_enabled) {
       setDniSessionToken('');
       setDniExtracted(null);
@@ -62,6 +77,22 @@ export default function HomePage() {
     setDniExtracted(null);
     openPublicFormAccessModal(form);
   }, []);
+
+  /**
+   * "Tus formularios": los de inscripción ya vienen con la URL prerrellenada;
+   * los de pago pasan antes por el aviso y la pantalla de participantes.
+   */
+  const handleRestrictedFormAccessClick = useCallback(
+    (form: PublicHomeForm) => {
+      if (form.form_type === 'payment') {
+        setPaymentGate({ form, accessPublicId: verifiedPublicId });
+        return;
+      }
+
+      window.open(form.url, '_blank', 'noopener,noreferrer');
+    },
+    [verifiedPublicId],
+  );
 
   const handleDniVerified = useCallback(
     (desktopToken: string, extracted: DniExtractedData | null) => {
@@ -170,7 +201,7 @@ export default function HomePage() {
 
     const { data, error } = await supabase
       .from('registration_forms')
-      .select('id, title, description, url, circular_url, authorization_url, active, open_date, close_date, access_type, dni_verification_enabled')
+      .select('id, title, description, url, circular_url, authorization_url, active, open_date, close_date, access_type, dni_verification_enabled, form_type, payment_activities')
       .eq('access_type', 'public')
       .eq('active', true)
       .order('created_at', { ascending: false });
@@ -195,6 +226,8 @@ export default function HomePage() {
         close_date: form.close_date,
         access_type: form.access_type,
         dni_verification_enabled: form.dni_verification_enabled ?? false,
+        form_type: form.form_type ?? 'registration',
+        payment_activities: form.payment_activities ?? [],
       }));
 
     setPublicForms(normalized);
@@ -220,6 +253,8 @@ export default function HomePage() {
 
   const checkAccessByPublicId = async (rawPublicId: string) => {
     const cleanPublicId = rawPublicId.trim().toUpperCase();
+
+    setVerifiedPublicId('');
 
     if (!cleanPublicId) {
       setRestrictedForms([]);
@@ -281,6 +316,7 @@ export default function HomePage() {
       );
 
       setRestrictedForms(normalizedRestricted);
+      setVerifiedPublicId(cleanPublicId);
       setAccessVerified(true);
       setCheckingAccess(false);
     } catch (err) {
@@ -401,6 +437,7 @@ export default function HomePage() {
             availableForms={myForms.available}
             upcomingForms={myForms.upcoming}
             emptyMessage="No tienes formularios asignados en este momento."
+            onAccessClick={handleRestrictedFormAccessClick}
           />
         )}
 
@@ -501,6 +538,14 @@ export default function HomePage() {
             </form>
           </motion.div>
         </div>
+      )}
+
+      {paymentGate && (
+        <PaymentFormGate
+          form={paymentGate.form}
+          accessPublicId={paymentGate.accessPublicId}
+          onCancel={() => setPaymentGate(null)}
+        />
       )}
 
       {dniGateForm && (

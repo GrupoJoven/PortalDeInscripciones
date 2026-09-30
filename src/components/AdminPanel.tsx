@@ -13,23 +13,39 @@ import {
   KeyRound,
   Settings,
   AlertCircle,
-  Mail
+  Mail,
+  Receipt,
+  ClipboardList
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 import Login from './Login';
 import { supabase } from '../lib/supabaseClient';
+import { PAYMENT_ACTIVITIES } from '../../supabase/functions/_shared/paymentActivities';
 import {
   RegistrationForm,
   GroupOption,
   StudentAccessRow,
   EditingForm,
+  PaymentActivityKey,
   toDatetimeLocalValue,
   fromDatetimeLocalValue,
   normalizeSearchText,
-  isValidGoogleEntryKey
+  isValidGoogleEntryKey,
+  parseDecimalInput
 } from '../types';
+
+const PAYMENT_DISCOUNT_FIELDS = [
+  { field: 'payment_sibling_discount_pair', label: '2 hermanos (parejas)' },
+  { field: 'payment_sibling_discount_trio', label: '3 hermanos (tríos)' },
+  { field: 'payment_sibling_discount_four_plus', label: '4 o más hermanos' },
+] as const;
+
+const formatDecimalForInput = (value: number | null | undefined) => {
+  if (value === null || value === undefined) return '';
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace('.', ',');
+};
 
 export default function AdminPanel({
   user,
@@ -383,7 +399,12 @@ export default function AdminPanel({
       response_school_question_id: '',
       response_birth_date_question_id: '',
       response_group_question_id: '',
-
+      form_type: 'registration',
+      payment_activities: [],
+      payment_activity_prices: {},
+      payment_sibling_discount_pair: '',
+      payment_sibling_discount_trio: '',
+      payment_sibling_discount_four_plus: '',
     });
     setFormModalError(null);
     setCopySourceSelectorOpen(false);
@@ -451,6 +472,19 @@ export default function AdminPanel({
       response_school_question_id: form.response_school_question_id ?? '',
       response_birth_date_question_id: form.response_birth_date_question_id ?? '',
       response_group_question_id: form.response_group_question_id ?? '',
+      form_type: form.form_type ?? 'registration',
+      payment_activities: form.payment_activities ?? [],
+      payment_activity_prices: Object.fromEntries(
+        Object.entries(form.payment_activity_prices ?? {}).map(([key, price]) => [
+          key,
+          formatDecimalForInput(price),
+        ])
+      ),
+      payment_sibling_discount_pair: formatDecimalForInput(form.payment_sibling_discount_pair),
+      payment_sibling_discount_trio: formatDecimalForInput(form.payment_sibling_discount_trio),
+      payment_sibling_discount_four_plus: formatDecimalForInput(
+        form.payment_sibling_discount_four_plus
+      ),
     });
   };
 
@@ -489,6 +523,9 @@ export default function AdminPanel({
 
       // Asegurarse de que el formulario tiene el mismo tipo de acceso
       if (form.access_type !== currentForm.access_type) return false;
+
+      // Los formularios de pago no tienen identificadores que copiar
+      if (form.form_type === 'payment') return false;
 
       // Asegurarse de que no se copie el formulario actual
       if (currentForm.id && form.id === currentForm.id) return false;
@@ -612,7 +649,55 @@ export default function AdminPanel({
       setFormModalError('La fecha de cierre debe ser posterior a la fecha de apertura.');
       return;
     }
-    if (editingForm.access_type === 'restricted') {
+
+    const isPaymentForm = editingForm.form_type === 'payment';
+
+    // Precios y descuentos de los formularios de pago, ya convertidos a número.
+    const paymentActivityPrices: Partial<Record<PaymentActivityKey, number>> = {};
+    const paymentDiscounts = {
+      payment_sibling_discount_pair: null as number | null,
+      payment_sibling_discount_trio: null as number | null,
+      payment_sibling_discount_four_plus: null as number | null,
+    };
+
+    if (isPaymentForm) {
+      if (editingForm.payment_activities.length === 0) {
+        setFormModalError('Marca al menos una actividad que se pague con este formulario.');
+        return;
+      }
+
+      for (const activity of PAYMENT_ACTIVITIES) {
+        if (!editingForm.payment_activities.includes(activity.key)) continue;
+
+        const price = parseDecimalInput(editingForm.payment_activity_prices[activity.key] ?? '');
+
+        if (price === null) continue;
+
+        if (Number.isNaN(price)) {
+          setFormModalError(
+            `El precio de "${activity.label}" no es válido. Escribe un importe como 120 o 120,50.`
+          );
+          return;
+        }
+
+        paymentActivityPrices[activity.key] = price;
+      }
+
+      for (const { field, label } of PAYMENT_DISCOUNT_FIELDS) {
+        const discount = parseDecimalInput(editingForm[field]);
+
+        if (discount !== null && (Number.isNaN(discount) || discount > 100)) {
+          setFormModalError(
+            `El descuento para ${label} no es válido. Debe ser un porcentaje entre 0 y 100.`
+          );
+          return;
+        }
+
+        paymentDiscounts[field] = discount;
+      }
+    }
+
+    if (!isPaymentForm && editingForm.access_type === 'restricted') {
       const requiredRestrictedFields: Array<{ label: string; value: string }> = [
         { label: 'IDENTIFICADOR', value: editingForm.prefill_public_id_entry },
         { label: 'NOMBRE COMPLETO', value: editingForm.prefill_name_entry },
@@ -661,7 +746,7 @@ export default function AdminPanel({
       }
     }
 
-    if (editingForm.access_type === 'public') {
+    if (!isPaymentForm && editingForm.access_type === 'public') {
       if (!editingForm.prefill_parent_email_entry.trim()) {
         setFormModalError('El identificador de Google Forms para "EMAIL DE CONTACTO" es obligatorio.');
         return;
@@ -954,7 +1039,33 @@ export default function AdminPanel({
         editingForm.access_type === 'restricted' && editingForm.response_group_question_id.trim()
           ? editingForm.response_group_question_id.trim()
           : null,
+
+      form_type: editingForm.form_type,
+      payment_activities: isPaymentForm
+        ? PAYMENT_ACTIVITIES.map((activity) => activity.key).filter((key) =>
+          editingForm.payment_activities.includes(key)
+        )
+        : [],
+      payment_activity_prices: paymentActivityPrices,
+      ...paymentDiscounts,
     };
+
+    // Los formularios de pago no usan los campos de prerrelleno de
+    // inscripción (sus preguntas son fijas), ni seguimiento, ni DNI.
+    if (isPaymentForm) {
+      for (const key of Object.keys(payload) as Array<keyof typeof payload>) {
+        if (key.startsWith('prefill_') || key.startsWith('response_')) {
+          (payload as Record<string, unknown>)[key] = null;
+        }
+      }
+
+      Object.assign(payload, {
+        prefill_underage_enabled: false,
+        dni_verification_enabled: false,
+        google_form_id: null,
+        google_form_watch_enabled: false,
+      });
+    }
 
     let formId = editingForm.id;
 
@@ -1265,54 +1376,60 @@ export default function AdminPanel({
         !googleFormEditUrlValidation.isValid)
     ) ||
     (
-      editingForm.access_type === 'public' &&
-      !editingForm.prefill_parent_email_entry.trim()
-    ) ||
-    (
-      editingForm.access_type === 'public' && editingForm.google_form_watch_enabled &&
-      !editingForm.response_parent_email_question_id.trim()
-    ) ||
-    (
-      editingForm.access_type === 'public' && editingForm.dni_verification_enabled &&
-      (
-        !editingForm.prefill_dni_entry.trim() ||
-        !editingForm.prefill_name_entry.trim()
-      )
-    ) ||
-    (
-      editingForm.access_type === 'public' && editingForm.dni_verification_enabled &&
-      editingForm.prefill_underage_enabled &&
-      (
-        !editingForm.prefill_underage.trim() ||
-        !editingForm.prefill_underage_reference_date.trim()
-      )
-    ) ||
+      editingForm.form_type === 'payment'
+        ? editingForm.payment_activities.length === 0
+        : (
+          (
+            editingForm.access_type === 'public' &&
+            !editingForm.prefill_parent_email_entry.trim()
+          ) ||
+          (
+            editingForm.access_type === 'public' && editingForm.google_form_watch_enabled &&
+            !editingForm.response_parent_email_question_id.trim()
+          ) ||
+          (
+            editingForm.access_type === 'public' && editingForm.dni_verification_enabled &&
+            (
+              !editingForm.prefill_dni_entry.trim() ||
+              !editingForm.prefill_name_entry.trim()
+            )
+          ) ||
+          (
+            editingForm.access_type === 'public' && editingForm.dni_verification_enabled &&
+            editingForm.prefill_underage_enabled &&
+            (
+              !editingForm.prefill_underage.trim() ||
+              !editingForm.prefill_underage_reference_date.trim()
+            )
+          ) ||
 
-    (
-      editingForm.access_type === 'restricted' &&
-      (
-        !editingForm.prefill_public_id_entry.trim() ||
-        !editingForm.prefill_name_entry.trim() ||
-        !editingForm.prefill_dni_entry.trim() ||
-        !editingForm.prefill_gender_entry.trim() ||
-        !editingForm.prefill_parent_email_entry.trim() ||
-        !editingForm.prefill_school_entry.trim() ||
-        !editingForm.prefill_birth_date_entry.trim() ||
-        !editingForm.prefill_group_entry.trim()
-      )
-    ) ||
-    (
-      editingForm.access_type === 'restricted' && editingForm.google_form_watch_enabled &&
-      (
-        !editingForm.response_public_id_question_id.trim() ||
-        !editingForm.response_name_question_id.trim() ||
-        !editingForm.response_dni_question_id.trim() ||
-        !editingForm.response_gender_question_id.trim() ||
-        !editingForm.response_parent_email_question_id.trim() ||
-        !editingForm.response_school_question_id.trim() ||
-        !editingForm.response_birth_date_question_id.trim() ||
-        !editingForm.response_group_question_id.trim()
-      )
+          (
+            editingForm.access_type === 'restricted' &&
+            (
+              !editingForm.prefill_public_id_entry.trim() ||
+              !editingForm.prefill_name_entry.trim() ||
+              !editingForm.prefill_dni_entry.trim() ||
+              !editingForm.prefill_gender_entry.trim() ||
+              !editingForm.prefill_parent_email_entry.trim() ||
+              !editingForm.prefill_school_entry.trim() ||
+              !editingForm.prefill_birth_date_entry.trim() ||
+              !editingForm.prefill_group_entry.trim()
+            )
+          ) ||
+          (
+            editingForm.access_type === 'restricted' && editingForm.google_form_watch_enabled &&
+            (
+              !editingForm.response_public_id_question_id.trim() ||
+              !editingForm.response_name_question_id.trim() ||
+              !editingForm.response_dni_question_id.trim() ||
+              !editingForm.response_gender_question_id.trim() ||
+              !editingForm.response_parent_email_question_id.trim() ||
+              !editingForm.response_school_question_id.trim() ||
+              !editingForm.response_birth_date_question_id.trim() ||
+              !editingForm.response_group_question_id.trim()
+            )
+          )
+        )
     )
   );
 
@@ -1459,9 +1576,26 @@ export default function AdminPanel({
                           Verificación de DNI
                         </span>
                       )}
+
+                      {form.form_type === 'payment' && (
+                        <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                          Pago
+                        </span>
+                      )}
                     </div>
 
                     <p className="text-slate-500 text-sm break-all mb-2">{form.url}</p>
+
+                    {form.form_type === 'payment' && (
+                      <p className="text-sm text-slate-500 mb-2">
+                        <span className="font-semibold text-slate-600">Actividades:</span>{' '}
+                        {PAYMENT_ACTIVITIES.filter((activity) =>
+                          form.payment_activities?.includes(activity.key)
+                        )
+                          .map((activity) => activity.label)
+                          .join(', ') || '—'}
+                      </p>
+                    )}
 
                     <div className="text-sm text-slate-500 space-y-1">
                       <p>
@@ -1819,6 +1953,81 @@ export default function AdminPanel({
                 </div>
 
                 <div className="md:col-span-2">
+                  <label className="block text-sm font-bold text-slate-700 mb-4">
+                    Tipo de formulario
+                  </label>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <label
+                      className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer transition-all ${editingForm.form_type === 'registration'
+                        ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                        : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
+                    >
+                      <input
+                        type="radio"
+                        name="form_type"
+                        checked={editingForm.form_type === 'registration'}
+                        onChange={() => {
+                          setCopySourceSelectorOpen(false);
+                          setEditingForm({ ...editingForm, form_type: 'registration' });
+                        }}
+                        className="w-5 h-5"
+                      />
+                      <ClipboardList className="w-5 h-5 flex-shrink-0" />
+                      <div>
+                        <div className="font-bold text-sm">INSCRIPCIÓN</div>
+                        <div className="text-xs opacity-80">
+                          Formulario de inscripción con prerrelleno y seguimiento.
+                        </div>
+                      </div>
+                    </label>
+
+                    <label
+                      className={`flex items-center gap-3 p-4 rounded-xl border cursor-pointer transition-all ${editingForm.form_type === 'payment'
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                        : 'bg-slate-50 border-slate-200 text-slate-600'
+                        }`}
+                    >
+                      <input
+                        type="radio"
+                        name="form_type"
+                        checked={editingForm.form_type === 'payment'}
+                        onChange={() => {
+                          setCopySourceSelectorOpen(false);
+                          setEditingForm({
+                            ...editingForm,
+                            form_type: 'payment',
+                            // Los formularios de pago no tienen seguimiento ni DNI.
+                            google_form_watch_enabled: false,
+                            dni_verification_enabled: false,
+                            prefill_underage_enabled: false,
+                          });
+                        }}
+                        className="w-5 h-5"
+                      />
+                      <Receipt className="w-5 h-5 flex-shrink-0" />
+                      <div>
+                        <div className="font-bold text-sm">PAGO</div>
+                        <div className="text-xs opacity-80">
+                          Participantes por actividad y justificante de pago.
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+
+                  {editingForm.form_type === 'payment' && (
+                    <p className="mt-3 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
+                      Antes de abrir el formulario se pedirán los participantes de cada actividad
+                      marcada más abajo, y con ellos se rellenarán las preguntas de nombres y la tabla
+                      "INDIQUE LAS ACTIVIDADES PAGADAS". Los identificadores de esas preguntas son
+                      fijos: el formulario de Google tiene que ser el formulario de pago (o una copia
+                      suya). No lleva seguimiento de respuestas.
+                    </p>
+                  )}
+                </div>
+
+                <div className="md:col-span-2">
                   <label className="block text-sm font-bold text-slate-700 mb-2">
                     URL de <strong>encuestado</strong> de Google Forms
                   </label>
@@ -1870,6 +2079,7 @@ export default function AdminPanel({
                   />
                 </div>
 
+                {editingForm.form_type === 'registration' && (
                 <div className="md:col-span-2">
                   <label className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
                     <input
@@ -1895,6 +2105,7 @@ export default function AdminPanel({
                     </div>
                   </label>
                 </div>
+                )}
                 {editingForm.google_form_watch_enabled && (
                   <div className="md:col-span-2">
                     <label className="block text-sm font-bold text-slate-700 mb-2">
@@ -2021,7 +2232,7 @@ export default function AdminPanel({
                   </div>
                 </div>
 
-                {editingForm.access_type === 'public' && (
+                {editingForm.form_type === 'registration' && editingForm.access_type === 'public' && (
                   <div className="md:col-span-2">
                     <label className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
                       <input
@@ -2093,7 +2304,7 @@ export default function AdminPanel({
                   />
                 </div>
 
-                {editingForm && (
+                {editingForm.form_type === 'registration' && (
                   <div className="md:col-span-2">
                     <div className="bg-green-50 border border-green-200 rounded-2xl p-4">
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -2191,7 +2402,129 @@ export default function AdminPanel({
                     </div>
                   </div>
                 )}
-                {editingForm.access_type === 'restricted' && (
+                {editingForm.form_type === 'payment' && (
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-bold text-slate-700 mb-2">
+                      Actividades que se pagan con este formulario
+                    </label>
+                    <p className="text-sm text-slate-500 mb-4">
+                      Solo las actividades marcadas aparecerán en la pantalla de participantes. En
+                      las demás se marcará 0 automáticamente en la tabla de actividades pagadas.
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+                      {PAYMENT_ACTIVITIES.map((activity) => {
+                        const checked = editingForm.payment_activities.includes(activity.key);
+
+                        return (
+                          <div
+                            key={activity.key}
+                            className={`rounded-xl border transition-all ${checked
+                              ? 'bg-emerald-50 border-emerald-200'
+                              : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                              }`}
+                          >
+                            <label className="flex items-start gap-3 p-3 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) =>
+                                  setEditingForm({
+                                    ...editingForm,
+                                    payment_activities: e.target.checked
+                                      ? [...editingForm.payment_activities, activity.key]
+                                      : editingForm.payment_activities.filter(
+                                        (key) => key !== activity.key
+                                      ),
+                                  })
+                                }
+                                className="mt-0.5 w-5 h-5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                              />
+                              <div className="min-w-0">
+                                <div className={`font-bold text-sm ${checked ? 'text-emerald-800' : 'text-slate-700'}`}>
+                                  {activity.label}
+                                </div>
+                                <div className="text-xs text-slate-500">
+                                  {activity.participantInput === 'public_id'
+                                    ? 'Se pide el identificador de cada participante'
+                                    : 'Se pide el nombre de cada participante'}
+                                </div>
+                              </div>
+                            </label>
+
+                            {checked && (
+                              <div className="px-3 pb-3">
+                                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                                  Precio de la actividad <span className="font-normal text-slate-400">(opcional)</span>
+                                </label>
+                                <div className="relative">
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    value={editingForm.payment_activity_prices[activity.key] ?? ''}
+                                    onChange={(e) =>
+                                      setEditingForm({
+                                        ...editingForm,
+                                        payment_activity_prices: {
+                                          ...editingForm.payment_activity_prices,
+                                          [activity.key]: e.target.value,
+                                        },
+                                      })
+                                    }
+                                    placeholder="120,00"
+                                    className="w-full pl-3 pr-9 py-2 bg-white border border-slate-200 rounded-lg focus:ring-4 focus:ring-emerald-100 focus:border-emerald-500 outline-none transition-all"
+                                  />
+                                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">
+                                    €
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {editingForm.payment_activities.length > 0 && (
+                      <div className="mt-6">
+                        <label className="block text-sm font-bold text-slate-700 mb-2">
+                          Descuentos por hermanos <span className="font-normal text-slate-400">(opcional)</span>
+                        </label>
+                        <p className="text-sm text-slate-500 mb-4">
+                          Porcentaje de descuento según cuántos hermanos participan. Es el mismo
+                          para todas las actividades marcadas.
+                        </p>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                          {PAYMENT_DISCOUNT_FIELDS.map(({ field, label }) => (
+                            <div key={field}>
+                              <label className="block text-sm font-semibold text-slate-600 mb-2">
+                                {label}
+                              </label>
+                              <div className="relative">
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={editingForm[field]}
+                                  onChange={(e) =>
+                                    setEditingForm({ ...editingForm, [field]: e.target.value })
+                                  }
+                                  placeholder="0"
+                                  className="w-full pl-4 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all"
+                                />
+                                <span className="absolute right-4 top-1/2 -translate-y-1/2 font-semibold text-slate-400">
+                                  %
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {editingForm.form_type === 'registration' && editingForm.access_type === 'restricted' && (
                   <div className="md:col-span-2">
                     <label className="block text-sm font-bold text-slate-700 mb-4">
                       Campos de prerrelleno de Google Forms
@@ -2457,7 +2790,7 @@ export default function AdminPanel({
                   </div>
                 )}
 
-                {editingForm.access_type === 'public' && (
+                {editingForm.form_type === 'registration' && editingForm.access_type === 'public' && (
                   <div className="md:col-span-2">
                     <label className="block text-sm font-bold text-slate-700 mb-4">
                       Campos de prerrelleno para acceso libre

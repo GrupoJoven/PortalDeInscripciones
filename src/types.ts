@@ -1,3 +1,9 @@
+import type { PaymentActivityKey } from '../supabase/functions/_shared/paymentActivities';
+
+export type { PaymentActivityKey };
+
+export type FormType = 'registration' | 'payment';
+
 export interface RegistrationForm {
   id: string;
   title: string;
@@ -40,6 +46,12 @@ export interface RegistrationForm {
   response_school_question_id: string | null;
   response_birth_date_question_id: string | null;
   response_group_question_id: string | null;
+  form_type: FormType;
+  payment_activities: PaymentActivityKey[];
+  payment_activity_prices: Partial<Record<PaymentActivityKey, number>>;
+  payment_sibling_discount_pair: number | null;
+  payment_sibling_discount_trio: number | null;
+  payment_sibling_discount_four_plus: number | null;
 }
 
 export interface EditingForm {
@@ -84,6 +96,13 @@ export interface EditingForm {
   response_school_question_id: string;
   response_birth_date_question_id: string;
   response_group_question_id: string;
+  form_type: FormType;
+  payment_activities: PaymentActivityKey[];
+  /** Importes tal cual se escriben en el panel; se validan al guardar. */
+  payment_activity_prices: Partial<Record<PaymentActivityKey, string>>;
+  payment_sibling_discount_pair: string;
+  payment_sibling_discount_trio: string;
+  payment_sibling_discount_four_plus: string;
 }
 
 export interface GroupOption {
@@ -116,6 +135,9 @@ export interface PublicHomeForm {
   close_date: string | null;
   access_type: 'public' | 'restricted';
   dni_verification_enabled?: boolean;
+  form_type?: FormType;
+  /** Solo formularios de pago: actividades que se pagan con este formulario. */
+  payment_activities?: PaymentActivityKey[];
   /** Solo en "Tus formularios": hay una respuesta validada con su identificador. */
   already_answered?: boolean;
 };
@@ -140,6 +162,22 @@ export interface VerifyPublicFormEmailResponse {
   status?: 'verified' | 'already_verified';
   access_url?: string;
   error?: string;
+}
+
+export interface PaymentValidateIdsResponse {
+  ok: boolean;
+  participants?: { public_id: string; name: string }[];
+  not_found?: string[];
+  error?: string;
+  message?: string;
+}
+
+export interface PaymentFormAccessResponse {
+  ok: boolean;
+  access_url?: string;
+  not_found?: string[];
+  error?: string;
+  message?: string;
 }
 
 export interface StartPublicFormEmailAccessResponse {
@@ -269,6 +307,17 @@ export const normalizeSearchText = (value: string | null | undefined) => {
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim();
+};
+
+/**
+ * Número decimal escrito en el panel ("12,50" o "12.50"). Devuelve null si
+ * está vacío y NaN si no es un número válido.
+ */
+export const parseDecimalInput = (value: string): number | null => {
+  const trimmed = value.trim().replace(',', '.');
+  if (!trimmed) return null;
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return Number.NaN;
+  return Number(trimmed);
 };
 
 export const isValidGoogleEntryKey = (value: string) => {
