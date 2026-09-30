@@ -177,9 +177,18 @@ export const siblingDiscountPercent = (count: number, discounts: SiblingDiscount
   return 0;
 };
 
+export interface ActivityPaymentAmount {
+  /** Precio por participante con el descuento ya aplicado. */
+  discountedPrice: number;
+  /** Precio × participantes, antes del descuento. */
+  gross: number;
+  discount: number;
+  total: number;
+}
+
 export interface PaymentAmount {
-  /** Precio × participantes de cada actividad, en el mismo orden recibido. */
-  activityAmounts: number[];
+  /** Importe de cada actividad, en el mismo orden recibido. */
+  activities: ActivityPaymentAmount[];
   /** Participantes de todas las actividades del formulario. */
   participants: number;
   /** Suma de todas las actividades, antes del descuento. */
@@ -190,23 +199,41 @@ export interface PaymentAmount {
 }
 
 /**
- * Importe de un formulario de pago: el descuento por hermanos se calcula con
- * el total de participantes de todas sus actividades y se aplica sobre el
- * importe conjunto. Se calcula en céntimos para no arrastrar errores de coma
- * flotante.
+ * Importe de un formulario de pago. El % de descuento por hermanos sale del
+ * total de participantes de todas sus actividades, y se aplica al precio de
+ * cada participante (redondeado al céntimo): así el precio con descuento de
+ * cada actividad, el importe de cada actividad y el total del formulario
+ * cuadran exactamente entre sí. Todo en céntimos para no arrastrar errores de
+ * coma flotante.
  */
 export const calculatePaymentAmount = (
   activities: readonly { price: number; count: number }[],
   discounts: SiblingDiscounts,
 ): PaymentAmount => {
-  const activityCents = activities.map(({ price, count }) => Math.round(price * 100) * count);
-  const grossCents = activityCents.reduce((sum, cents) => sum + cents, 0);
   const participants = activities.reduce((sum, { count }) => sum + count, 0);
   const discountPercent = siblingDiscountPercent(participants, discounts);
-  const discountCents = Math.round((grossCents * discountPercent) / 100);
+
+  const activityCents = activities.map(({ price, count }) => {
+    const priceCents = Math.round(price * 100);
+    const discountPerParticipantCents = Math.round((priceCents * discountPercent) / 100);
+
+    return {
+      discountedPriceCents: priceCents - discountPerParticipantCents,
+      grossCents: priceCents * count,
+      discountCents: discountPerParticipantCents * count,
+    };
+  });
+
+  const grossCents = activityCents.reduce((sum, item) => sum + item.grossCents, 0);
+  const discountCents = activityCents.reduce((sum, item) => sum + item.discountCents, 0);
 
   return {
-    activityAmounts: activityCents.map((cents) => cents / 100),
+    activities: activityCents.map((item) => ({
+      discountedPrice: item.discountedPriceCents / 100,
+      gross: item.grossCents / 100,
+      discount: item.discountCents / 100,
+      total: (item.grossCents - item.discountCents) / 100,
+    })),
     participants,
     gross: grossCents / 100,
     discountPercent,

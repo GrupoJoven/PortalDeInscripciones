@@ -214,7 +214,8 @@ export default function PaymentCalculatorPage() {
                 <ul className="divide-y divide-slate-100">
                   {form.activities.map((activity, activityIndex) => {
                     const count = counts[form.id]?.[activity.key] ?? 0;
-                    const activityAmount = amount.activityAmounts[activityIndex];
+                    const activityAmount = amount.activities[activityIndex];
+                    const discounted = count > 0 && activityAmount.discount > 0;
 
                     return (
                       <li
@@ -226,6 +227,15 @@ export default function PaymentCalculatorPage() {
                           <p className="text-sm text-slate-500">
                             {euros.format(activity.price)} por participante
                           </p>
+                          {discounted && (
+                            <p className="text-sm font-semibold text-emerald-700">
+                              Con descuento ({amount.discountPercent} %):{' '}
+                              <span className="line-through font-normal text-slate-400">
+                                {euros.format(activity.price)}
+                              </span>{' '}
+                              → {euros.format(activityAmount.discountedPrice)} por participante
+                            </p>
+                          )}
                         </div>
 
                         <div className="flex items-center justify-between sm:justify-end gap-4">
@@ -257,11 +267,18 @@ export default function PaymentCalculatorPage() {
                             </button>
                           </div>
 
-                          <p
-                            className={`w-28 text-right font-bold tabular-nums ${count > 0 ? 'text-slate-900' : 'text-slate-300'}`}
-                          >
-                            {euros.format(activityAmount)}
-                          </p>
+                          <div className="w-28 text-right">
+                            {discounted && (
+                              <p className="text-xs text-slate-400 line-through tabular-nums">
+                                {euros.format(activityAmount.gross)}
+                              </p>
+                            )}
+                            <p
+                              className={`font-bold tabular-nums ${count > 0 ? 'text-slate-900' : 'text-slate-300'}`}
+                            >
+                              {euros.format(activityAmount.total)}
+                            </p>
+                          </div>
                         </div>
                       </li>
                     );
