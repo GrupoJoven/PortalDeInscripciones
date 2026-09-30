@@ -2,7 +2,7 @@
 -- Descuentos por hermanos por defecto en los formularios de pago
 -- =====================================================================
 -- Los formularios de pago nuevos ya se crean desde el panel con 5 %, 10 %
--- y 15 % (2, 3 y 4 o más hermanos en una misma actividad). Esto aplica los
+-- y 15 % (2, 3 y 4 o más hermanos en las actividades del formulario). Esto aplica los
 -- mismos valores a los que ya existían sin descuentos configurados, para
 -- que la calculadora de pagos los tenga en cuenta.
 --

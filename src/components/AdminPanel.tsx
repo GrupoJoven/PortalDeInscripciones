@@ -2503,9 +2503,9 @@ export default function AdminPanel({
                           Descuentos por hermanos <span className="font-normal text-slate-400">(opcional)</span>
                         </label>
                         <p className="text-sm text-slate-500 mb-4">
-                          Porcentaje de descuento según cuántos hermanos participan en una misma
-                          actividad (participar en dos actividades distintas no cuenta). Es el mismo
-                          para todas las actividades marcadas. Se usa en la calculadora de pagos.
+                          Porcentaje de descuento según cuántos hermanos participan en total en las
+                          actividades marcadas de este formulario (aunque sean actividades distintas).
+                          Se aplica sobre el importe de todas ellas y se usa en la calculadora de pagos.
                         </p>
 
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

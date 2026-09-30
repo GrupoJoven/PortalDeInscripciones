@@ -7,7 +7,7 @@ import { isFormCurrentlyOpen } from '../types';
 import {
   MAX_PARTICIPANTS_PER_ACTIVITY,
   PAYMENT_ACTIVITIES,
-  calculateActivityAmount,
+  calculatePaymentAmount,
   isPaymentActivityKey,
 } from '../../supabase/functions/_shared/paymentActivities';
 import type {
@@ -129,22 +129,24 @@ export default function PaymentCalculatorPage() {
     setCounts((current) => ({ ...current, [formId]: { ...current[formId], [key]: clamped } }));
   };
 
-  const totals = useMemo(
+  // Importe de cada formulario: el descuento se calcula con los participantes
+  // de todas sus actividades juntas.
+  const amounts = useMemo(
     () =>
       forms.map((form) =>
-        form.activities.reduce(
-          (sum, activity) =>
-            sum +
-            calculateActivityAmount(activity.price, counts[form.id]?.[activity.key] ?? 0, form.discounts)
-              .total,
-          0,
+        calculatePaymentAmount(
+          form.activities.map((activity) => ({
+            price: activity.price,
+            count: counts[form.id]?.[activity.key] ?? 0,
+          })),
+          form.discounts,
         ),
       ),
     [forms, counts],
   );
 
-  const grandTotal = totals.reduce((sum, total) => sum + total, 0);
-  const formsWithAmount = totals.filter((total) => total > 0).length;
+  const grandTotal = amounts.reduce((sum, amount) => sum + amount.total, 0);
+  const formsWithAmount = amounts.filter((amount) => amount.total > 0).length;
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-12">
@@ -186,6 +188,7 @@ export default function PaymentCalculatorPage() {
         <div className="space-y-8">
           {forms.map((form, formIndex) => {
             const summary = discountSummary(form.discounts);
+            const amount = amounts[formIndex];
 
             return (
               <motion.section
@@ -201,7 +204,7 @@ export default function PaymentCalculatorPage() {
                       <h2 className="text-xl font-bold text-slate-900 break-words">{form.title}</h2>
                       {summary && (
                         <p className="text-sm text-slate-500 mt-1">
-                          Descuento por hermanos en una misma actividad: {summary}
+                          Descuento por hermanos en este pago: {summary}
                         </p>
                       )}
                     </div>
@@ -209,9 +212,9 @@ export default function PaymentCalculatorPage() {
                 </div>
 
                 <ul className="divide-y divide-slate-100">
-                  {form.activities.map((activity) => {
+                  {form.activities.map((activity, activityIndex) => {
                     const count = counts[form.id]?.[activity.key] ?? 0;
-                    const amount = calculateActivityAmount(activity.price, count, form.discounts);
+                    const activityAmount = amount.activityAmounts[activityIndex];
 
                     return (
                       <li
@@ -223,12 +226,6 @@ export default function PaymentCalculatorPage() {
                           <p className="text-sm text-slate-500">
                             {euros.format(activity.price)} por participante
                           </p>
-                          {amount.discount > 0 && (
-                            <p className="text-sm font-semibold text-emerald-700">
-                              Descuento {count} hermanos ({amount.discountPercent} %): −
-                              {euros.format(amount.discount)}
-                            </p>
-                          )}
                         </div>
 
                         <div className="flex items-center justify-between sm:justify-end gap-4">
@@ -260,29 +257,40 @@ export default function PaymentCalculatorPage() {
                             </button>
                           </div>
 
-                          <div className="w-28 text-right">
-                            {amount.discount > 0 && (
-                              <p className="text-xs text-slate-400 line-through tabular-nums">
-                                {euros.format(amount.gross)}
-                              </p>
-                            )}
-                            <p
-                              className={`font-bold tabular-nums ${count > 0 ? 'text-slate-900' : 'text-slate-300'}`}
-                            >
-                              {euros.format(amount.total)}
-                            </p>
-                          </div>
+                          <p
+                            className={`w-28 text-right font-bold tabular-nums ${count > 0 ? 'text-slate-900' : 'text-slate-300'}`}
+                          >
+                            {euros.format(activityAmount)}
+                          </p>
                         </div>
                       </li>
                     );
                   })}
                 </ul>
 
-                <div className="px-5 sm:px-6 py-4 bg-emerald-50 border-t border-emerald-100 flex items-center justify-between gap-4">
-                  <span className="font-bold text-emerald-900">Total de este pago</span>
-                  <span className="text-2xl font-extrabold text-emerald-800 tabular-nums">
-                    {euros.format(totals[formIndex])}
-                  </span>
+                <div className="px-5 sm:px-6 py-4 bg-emerald-50 border-t border-emerald-100">
+                  {amount.discount > 0 && (
+                    <div className="space-y-1 mb-3 pb-3 border-b border-emerald-100 text-sm">
+                      <div className="flex items-center justify-between gap-4 text-slate-600">
+                        <span>Subtotal</span>
+                        <span className="tabular-nums">{euros.format(amount.gross)}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-4 font-semibold text-emerald-700">
+                        <span>
+                          Descuento {amount.participants >= 4 ? '4 o más' : amount.participants}{' '}
+                          hermanos ({amount.discountPercent} %)
+                        </span>
+                        <span className="tabular-nums">−{euros.format(amount.discount)}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="font-bold text-emerald-900">Total de este pago</span>
+                    <span className="text-2xl font-extrabold text-emerald-800 tabular-nums">
+                      {euros.format(amount.total)}
+                    </span>
+                  </div>
                 </div>
               </motion.section>
             );
@@ -303,9 +311,9 @@ export default function PaymentCalculatorPage() {
           )}
 
           <p className="text-sm text-slate-500 text-center">
-            El descuento por hermanos se aplica cuando varios hermanos participan en la misma
-            actividad. Si pagas varias actividades juntas en un único pago, suma sus importes; si
-            las pagas por separado, cada pago lleva su propio formulario.
+            El descuento por hermanos se calcula con todos tus hijos que participan en las
+            actividades de un mismo pago, aunque sean actividades distintas. Los hermanos en
+            actividades de pagos distintos no se suman.
           </p>
         </div>
       )}

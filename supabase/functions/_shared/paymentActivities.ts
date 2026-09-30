@@ -165,9 +165,10 @@ export interface SiblingDiscounts {
 export const DEFAULT_SIBLING_DISCOUNTS: SiblingDiscounts = { pair: 5, trio: 10, fourPlus: 15 };
 
 /**
- * % de descuento que corresponde a `count` hermanos en una MISMA actividad.
- * Participar en dos actividades distintas no cuenta como pareja: se paga
- * cada actividad por separado.
+ * % de descuento que corresponde a `count` hermanos. Se cuentan todos los
+ * participantes de las actividades de un mismo formulario de pago (p. ej. un
+ * hijo en la acampada de postcomunión y otro en la de confirmación son una
+ * pareja); las actividades de formularios distintos no se suman.
  */
 export const siblingDiscountPercent = (count: number, discounts: SiblingDiscounts) => {
   if (count >= 4) return discounts.fourPlus ?? 0;
@@ -176,8 +177,12 @@ export const siblingDiscountPercent = (count: number, discounts: SiblingDiscount
   return 0;
 };
 
-export interface ActivityAmount {
-  /** Precio × participantes, antes del descuento. */
+export interface PaymentAmount {
+  /** Precio × participantes de cada actividad, en el mismo orden recibido. */
+  activityAmounts: number[];
+  /** Participantes de todas las actividades del formulario. */
+  participants: number;
+  /** Suma de todas las actividades, antes del descuento. */
   gross: number;
   discountPercent: number;
   discount: number;
@@ -185,20 +190,24 @@ export interface ActivityAmount {
 }
 
 /**
- * Importe de una actividad: el descuento se aplica sobre el total de todos
- * los hermanos que participan en ella. Se calcula en céntimos para no
- * arrastrar errores de coma flotante.
+ * Importe de un formulario de pago: el descuento por hermanos se calcula con
+ * el total de participantes de todas sus actividades y se aplica sobre el
+ * importe conjunto. Se calcula en céntimos para no arrastrar errores de coma
+ * flotante.
  */
-export const calculateActivityAmount = (
-  price: number,
-  count: number,
+export const calculatePaymentAmount = (
+  activities: readonly { price: number; count: number }[],
   discounts: SiblingDiscounts,
-): ActivityAmount => {
-  const grossCents = Math.round(price * 100) * count;
-  const discountPercent = siblingDiscountPercent(count, discounts);
+): PaymentAmount => {
+  const activityCents = activities.map(({ price, count }) => Math.round(price * 100) * count);
+  const grossCents = activityCents.reduce((sum, cents) => sum + cents, 0);
+  const participants = activities.reduce((sum, { count }) => sum + count, 0);
+  const discountPercent = siblingDiscountPercent(participants, discounts);
   const discountCents = Math.round((grossCents * discountPercent) / 100);
 
   return {
+    activityAmounts: activityCents.map((cents) => cents / 100),
+    participants,
     gross: grossCents / 100,
     discountPercent,
     discount: discountCents / 100,
