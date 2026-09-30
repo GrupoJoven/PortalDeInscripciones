@@ -609,7 +609,16 @@ export default function PaymentFormGate({ form, accessPublicId, onCancel }: Paym
 
           <p className="text-xs text-slate-500 mt-5">
             En el formulario solo te quedará indicar la cantidad total pagada y adjuntar el
-            justificante.
+            justificante. Si no sabes cuánto es,{' '}
+            <a
+              href="/calculadora-pagos"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-emerald-700 underline"
+            >
+              usa la calculadora de pagos
+            </a>
+            .
           </p>
 
           {blockingIssues.length > 0 && (

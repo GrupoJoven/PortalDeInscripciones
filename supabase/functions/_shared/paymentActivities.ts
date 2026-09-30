@@ -151,3 +151,57 @@ export const gridColumnForCount = (count: number) => String(count);
 
 /** Los nombres de una actividad van todos juntos en un único párrafo. */
 export const joinParticipantNames = (names: readonly string[]) => names.join(', ');
+
+// --- Importes ----------------------------------------------------------------
+
+/** % de descuento por hermanos de un formulario de pago (null = sin descuento). */
+export interface SiblingDiscounts {
+  pair: number | null;
+  trio: number | null;
+  fourPlus: number | null;
+}
+
+/** Valores con los que se rellena la configuración de un formulario de pago nuevo. */
+export const DEFAULT_SIBLING_DISCOUNTS: SiblingDiscounts = { pair: 5, trio: 10, fourPlus: 15 };
+
+/**
+ * % de descuento que corresponde a `count` hermanos en una MISMA actividad.
+ * Participar en dos actividades distintas no cuenta como pareja: se paga
+ * cada actividad por separado.
+ */
+export const siblingDiscountPercent = (count: number, discounts: SiblingDiscounts) => {
+  if (count >= 4) return discounts.fourPlus ?? 0;
+  if (count === 3) return discounts.trio ?? 0;
+  if (count === 2) return discounts.pair ?? 0;
+  return 0;
+};
+
+export interface ActivityAmount {
+  /** Precio × participantes, antes del descuento. */
+  gross: number;
+  discountPercent: number;
+  discount: number;
+  total: number;
+}
+
+/**
+ * Importe de una actividad: el descuento se aplica sobre el total de todos
+ * los hermanos que participan en ella. Se calcula en céntimos para no
+ * arrastrar errores de coma flotante.
+ */
+export const calculateActivityAmount = (
+  price: number,
+  count: number,
+  discounts: SiblingDiscounts,
+): ActivityAmount => {
+  const grossCents = Math.round(price * 100) * count;
+  const discountPercent = siblingDiscountPercent(count, discounts);
+  const discountCents = Math.round((grossCents * discountPercent) / 100);
+
+  return {
+    gross: grossCents / 100,
+    discountPercent,
+    discount: discountCents / 100,
+    total: (grossCents - discountCents) / 100,
+  };
+};

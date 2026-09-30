@@ -22,7 +22,10 @@ import { es } from 'date-fns/locale';
 
 import Login from './Login';
 import { supabase } from '../lib/supabaseClient';
-import { PAYMENT_ACTIVITIES } from '../../supabase/functions/_shared/paymentActivities';
+import {
+  DEFAULT_SIBLING_DISCOUNTS,
+  PAYMENT_ACTIVITIES,
+} from '../../supabase/functions/_shared/paymentActivities';
 import {
   RegistrationForm,
   GroupOption,
@@ -45,6 +48,13 @@ const PAYMENT_DISCOUNT_FIELDS = [
 const formatDecimalForInput = (value: number | null | undefined) => {
   if (value === null || value === undefined) return '';
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace('.', ',');
+};
+
+// Descuentos con los que se rellena la configuración de un formulario de pago.
+const defaultDiscountInputs = {
+  payment_sibling_discount_pair: formatDecimalForInput(DEFAULT_SIBLING_DISCOUNTS.pair),
+  payment_sibling_discount_trio: formatDecimalForInput(DEFAULT_SIBLING_DISCOUNTS.trio),
+  payment_sibling_discount_four_plus: formatDecimalForInput(DEFAULT_SIBLING_DISCOUNTS.fourPlus),
 };
 
 export default function AdminPanel({
@@ -402,9 +412,7 @@ export default function AdminPanel({
       form_type: 'registration',
       payment_activities: [],
       payment_activity_prices: {},
-      payment_sibling_discount_pair: '',
-      payment_sibling_discount_trio: '',
-      payment_sibling_discount_four_plus: '',
+      ...defaultDiscountInputs,
     });
     setFormModalError(null);
     setCopySourceSelectorOpen(false);
@@ -2002,6 +2010,10 @@ export default function AdminPanel({
                             google_form_watch_enabled: false,
                             dni_verification_enabled: false,
                             prefill_underage_enabled: false,
+                            // Si todavía no tiene descuentos, se proponen los de siempre.
+                            ...(PAYMENT_DISCOUNT_FIELDS.every(({ field }) => !editingForm[field].trim())
+                              ? defaultDiscountInputs
+                              : {}),
                           });
                         }}
                         className="w-5 h-5"
@@ -2491,8 +2503,9 @@ export default function AdminPanel({
                           Descuentos por hermanos <span className="font-normal text-slate-400">(opcional)</span>
                         </label>
                         <p className="text-sm text-slate-500 mb-4">
-                          Porcentaje de descuento según cuántos hermanos participan. Es el mismo
-                          para todas las actividades marcadas.
+                          Porcentaje de descuento según cuántos hermanos participan en una misma
+                          actividad (participar en dos actividades distintas no cuenta). Es el mismo
+                          para todas las actividades marcadas. Se usa en la calculadora de pagos.
                         </p>
 
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

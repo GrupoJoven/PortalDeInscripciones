@@ -15,6 +15,7 @@ import HomePage from './components/HomePage';
 import VerifyParentEmailPage from './components/VerifyParentEmailPage';
 import VerifyPublicFormEmailPage from './components/VerifyPublicFormEmailPage';
 import DniCapturePage from './components/DniCapturePage';
+import PaymentCalculatorPage from './components/PaymentCalculatorPage';
 
 import AppLayout from './layout/AppLayout';
 
@@ -138,6 +139,7 @@ export default function App() {
             <Route path="/verify-parent-email" element={<VerifyParentEmailPage />} />
             <Route path="/verify-public-form-email" element={<VerifyPublicFormEmailPage />} />
             <Route path="/verificacion-dni" element={<DniCapturePage />} />
+            <Route path="/calculadora-pagos" element={<PaymentCalculatorPage />} />
             <Route
               path="/admin"
               element={

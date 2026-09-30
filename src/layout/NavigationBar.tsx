@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { User } from '@supabase/supabase-js';
-import { LogOut, Lock } from 'lucide-react';
+import { Calculator, LogOut, Lock } from 'lucide-react';
 
 interface Props {
   user: User | null;
@@ -25,6 +25,15 @@ export default function NavigationBar({ user, onLogout }: Props) {
       </Link>
 
       <div className="flex items-center gap-4">
+        <Link
+          to="/calculadora-pagos"
+          className="text-slate-600 hover:text-emerald-700 font-medium transition-colors flex items-center gap-1.5"
+          title="Calculadora de pagos"
+        >
+          <Calculator className="w-5 h-5" />
+          <span className="hidden sm:inline">Calculadora de pagos</span>
+        </Link>
+
         {user ? (
           <>
             <Link
