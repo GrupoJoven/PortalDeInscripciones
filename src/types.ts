@@ -168,6 +168,8 @@ export interface PaymentValidateIdsResponse {
   ok: boolean;
   participants?: { public_id: string; name: string }[];
   not_found?: string[];
+  /** Existen, pero su grupo no es de la etapa de la actividad. */
+  wrong_group?: string[];
   error?: string;
   message?: string;
 }
@@ -176,6 +178,7 @@ export interface PaymentFormAccessResponse {
   ok: boolean;
   access_url?: string;
   not_found?: string[];
+  wrong_group?: { activity: PaymentActivityKey; public_id: string }[];
   error?: string;
   message?: string;
 }

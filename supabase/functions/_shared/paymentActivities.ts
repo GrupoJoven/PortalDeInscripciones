@@ -27,6 +27,9 @@ export type PaymentActivityKey =
  */
 export type PaymentParticipantInput = 'name' | 'public_id';
 
+/** Etapa del grupo al que tiene que pertenecer un participante por identificador. */
+export type CatechesisStage = 'preconfirmacion' | 'confirmacion';
+
 export interface PaymentActivity {
   key: PaymentActivityKey;
   /** Nombre exacto de la pregunta de párrafo en el formulario de Google. */
@@ -34,6 +37,11 @@ export interface PaymentActivity {
   /** Nombre exacto de la fila en la cuadrícula del formulario de Google. */
   gridRowLabel: string;
   participantInput: PaymentParticipantInput;
+  /**
+   * Solo actividades por identificador: el alumno tiene que estar en un grupo
+   * de esta etapa (ver `stageFromGroupName`).
+   */
+  requiredStage?: CatechesisStage;
   namesEntry: string;
   gridRowEntry: string;
 }
@@ -52,6 +60,7 @@ export const PAYMENT_ACTIVITIES: readonly PaymentActivity[] = [
     label: 'ACAMPADA PRECONFIRMACIÓN',
     gridRowLabel: 'ACAMPADA PRECONFIR',
     participantInput: 'public_id',
+    requiredStage: 'preconfirmacion',
     namesEntry: 'entry.546902884',
     gridRowEntry: 'entry.2125776880',
   },
@@ -60,6 +69,7 @@ export const PAYMENT_ACTIVITIES: readonly PaymentActivity[] = [
     label: 'ACAMPADA CONFIRMACIÓN',
     gridRowLabel: 'ACAMPADA CONFIR',
     participantInput: 'public_id',
+    requiredStage: 'confirmacion',
     namesEntry: 'entry.1625976138',
     gridRowEntry: 'entry.719210589',
   },
@@ -68,6 +78,7 @@ export const PAYMENT_ACTIVITIES: readonly PaymentActivity[] = [
     label: 'RETIRO CONFIRMACIÓN',
     gridRowLabel: 'RETIRO CONFIR',
     participantInput: 'public_id',
+    requiredStage: 'confirmacion',
     namesEntry: 'entry.1441405370',
     gridRowEntry: 'entry.827903391',
   },
@@ -84,6 +95,7 @@ export const PAYMENT_ACTIVITIES: readonly PaymentActivity[] = [
     label: 'CAMINO PRECONFIRMACIÓN',
     gridRowLabel: 'CAMINO PRECONFIR',
     participantInput: 'public_id',
+    requiredStage: 'preconfirmacion',
     namesEntry: 'entry.31537136',
     gridRowEntry: 'entry.472469403',
   },
@@ -92,6 +104,7 @@ export const PAYMENT_ACTIVITIES: readonly PaymentActivity[] = [
     label: 'CAMINO CONFIRMACIÓN',
     gridRowLabel: 'CAMINO CONFIR',
     participantInput: 'public_id',
+    requiredStage: 'confirmacion',
     namesEntry: 'entry.374068113',
     gridRowEntry: 'entry.222505288',
   },
@@ -100,6 +113,27 @@ export const PAYMENT_ACTIVITIES: readonly PaymentActivity[] = [
 export const PAYMENT_ACTIVITY_KEYS: readonly PaymentActivityKey[] = PAYMENT_ACTIVITIES.map(
   (activity) => activity.key,
 );
+
+export const CATECHESIS_STAGE_LABELS: Record<CatechesisStage, string> = {
+  preconfirmacion: 'preconfirmación',
+  confirmacion: 'confirmación',
+};
+
+/**
+ * Etapa de un grupo según su nombre: "PRECONFIRMACIÓN ..." o "CONFIRMACIÓN ...",
+ * sin distinguir mayúsculas ni tildes. Cualquier otro grupo no tiene etapa y
+ * no sirve para las actividades por identificador.
+ */
+export const stageFromGroupName = (groupName: string | null | undefined): CatechesisStage | null => {
+  const normalized = (groupName ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase();
+
+  if (normalized.includes('PRECONFIRMACION')) return 'preconfirmacion';
+  if (normalized.includes('CONFIRMACION')) return 'confirmacion';
+  return null;
+};
 
 /** Límite de participantes por actividad en un mismo pago. */
 export const MAX_PARTICIPANTS_PER_ACTIVITY = 10;

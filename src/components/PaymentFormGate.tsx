@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 
 import {
+  CATECHESIS_STAGE_LABELS,
   MAX_PARTICIPANTS_PER_ACTIVITY,
   PAYMENT_ACTIVITIES,
 } from '../../supabase/functions/_shared/paymentActivities';
@@ -74,6 +75,13 @@ const withSlashBreaks = (label: string) =>
       {part}
     </Fragment>
   ));
+
+const NOT_FOUND_MESSAGE = 'No se ha encontrado este identificador.';
+
+const wrongGroupMessage = (activity: PaymentActivity) =>
+  activity.requiredStage
+    ? `Este identificador no pertenece a un grupo de ${CATECHESIS_STAGE_LABELS[activity.requiredStage]}.`
+    : 'Este identificador no es válido para esta actividad.';
 
 const isPendingValidation = (row: ParticipantRow) =>
   row.name === null && !row.error && !!row.value.trim();
@@ -181,6 +189,7 @@ export default function PaymentFormGate({ form, accessPublicId, onCancel }: Paym
         action: 'validate_ids',
         form_id: form.id,
         access_public_id: accessPublicId,
+        activity: activity.key,
         public_ids: idsToValidate,
       });
 
@@ -194,6 +203,7 @@ export default function PaymentFormGate({ form, accessPublicId, onCancel }: Paym
 
       const namesById = new Map((result.participants ?? []).map((p) => [p.public_id, p.name]));
       const notFound = new Set(result.not_found ?? []);
+      const wrongGroup = new Set(result.wrong_group ?? []);
 
       // Se aplica sobre el estado actual: si mientras tanto se ha editado
       // alguna fila, esa se queda pendiente de validar.
@@ -205,9 +215,8 @@ export default function PaymentFormGate({ form, accessPublicId, onCancel }: Paym
           const name = namesById.get(publicId);
 
           if (name) return { ...row, value: publicId, name, error: null };
-          if (notFound.has(publicId)) {
-            return { ...row, error: 'No se ha encontrado este identificador.' };
-          }
+          if (notFound.has(publicId)) return { ...row, error: NOT_FOUND_MESSAGE };
+          if (wrongGroup.has(publicId)) return { ...row, error: wrongGroupMessage(activity) };
           return row;
         }),
       );
@@ -287,8 +296,11 @@ export default function PaymentFormGate({ form, accessPublicId, onCancel }: Paym
         return;
       }
 
-      if (result.not_found?.length) {
-        const notFound = new Set(result.not_found);
+      if (result.not_found?.length || result.wrong_group?.length) {
+        const notFound = new Set(result.not_found ?? []);
+        const wrongGroup = new Set(
+          (result.wrong_group ?? []).map((item) => `${item.activity}:${item.public_id}`),
+        );
 
         setRowsByActivity((current) => {
           const next: RowsByActivity = { ...current };
@@ -296,11 +308,15 @@ export default function PaymentFormGate({ form, accessPublicId, onCancel }: Paym
           for (const activity of activities) {
             if (activity.participantInput !== 'public_id') continue;
 
-            next[activity.key] = (current[activity.key] ?? []).map((row) =>
-              notFound.has(normalizePublicId(row.value))
-                ? { ...row, name: null, error: 'No se ha encontrado este identificador.' }
-                : row,
-            );
+            next[activity.key] = (current[activity.key] ?? []).map((row) => {
+              const publicId = normalizePublicId(row.value);
+
+              if (notFound.has(publicId)) return { ...row, name: null, error: NOT_FOUND_MESSAGE };
+              if (wrongGroup.has(`${activity.key}:${publicId}`)) {
+                return { ...row, name: null, error: wrongGroupMessage(activity) };
+              }
+              return row;
+            });
           }
 
           return next;
@@ -481,6 +497,8 @@ export default function PaymentFormGate({ form, accessPublicId, onCancel }: Paym
                     {byId
                       ? 'Escribe el identificador personal de cada participante (SANP-XXXX-XXX) y pulsa "Validar identificadores".'
                       : 'Escribe el nombre y apellidos de cada participante.'}
+                    {activity.requiredStage &&
+                      ` Solo se admiten participantes de los grupos de ${CATECHESIS_STAGE_LABELS[activity.requiredStage]}.`}
                   </p>
 
                   {rows.length === 0 && (

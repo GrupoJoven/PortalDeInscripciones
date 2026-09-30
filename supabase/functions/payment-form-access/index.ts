@@ -7,13 +7,20 @@ import {
   gridColumnForCount,
   isPaymentActivityKey,
   joinParticipantNames,
+  stageFromGroupName,
 } from "../_shared/paymentActivities.ts";
-import type { PaymentActivityKey } from "../_shared/paymentActivities.ts";
+import type {
+  CatechesisStage,
+  PaymentActivity,
+  PaymentActivityKey,
+} from "../_shared/paymentActivities.ts";
 
 // Acceso a los formularios de pago. Dos acciones:
 //
 //   - validate_ids: transforma identificadores personales en el nombre del
 //     alumno asociado (el botón "Validar identificadores" del portal).
+//     Solo se aceptan alumnos de un grupo de la etapa de la actividad
+//     (preconfirmación o confirmación, según el nombre del grupo).
 //   - build_url: recibe los participantes de cada actividad, vuelve a
 //     validar los identificadores y devuelve el enlace prerrellenado al
 //     formulario de Google (nombres en un único párrafo por actividad y la
@@ -32,6 +39,11 @@ const corsHeaders = {
 
 const MAX_NAME_LENGTH = 120;
 const MAX_PUBLIC_ID_LENGTH = 40;
+
+type ResolvedStudent = {
+  name: string;
+  stage: CatechesisStage | null;
+};
 
 type PaymentFormRow = {
   id: string;
@@ -112,7 +124,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === "validate_ids") {
-      return await handleValidateIds(supabase, body?.public_ids);
+      return await handleValidateIds(supabase, formRow, body?.activity, body?.public_ids);
     }
 
     return await handleBuildUrl(supabase, formRow, body?.participants);
@@ -122,9 +134,23 @@ Deno.serve(async (req) => {
   }
 });
 
-async function handleValidateIds(supabase: SupabaseClient, rawIds: unknown) {
-  if (!Array.isArray(rawIds)) {
+async function handleValidateIds(
+  supabase: SupabaseClient,
+  form: PaymentFormRow,
+  rawActivity: unknown,
+  rawIds: unknown
+) {
+  if (!Array.isArray(rawIds) || !isPaymentActivityKey(rawActivity)) {
     return jsonResponse({ ok: false, error: "missing_fields" }, 400);
+  }
+
+  const activity = PAYMENT_ACTIVITIES.find((item) => item.key === rawActivity)!;
+
+  if (
+    activity.participantInput !== "public_id" ||
+    !(form.payment_activities ?? []).includes(activity.key)
+  ) {
+    return jsonResponse({ ok: false, error: "activity_not_enabled" }, 400);
   }
 
   const publicIds = [...new Set(rawIds.map(normalizePublicId).filter(Boolean))];
@@ -133,14 +159,18 @@ async function handleValidateIds(supabase: SupabaseClient, rawIds: unknown) {
     return jsonResponse({ ok: false, error: "invalid_public_ids" }, 400);
   }
 
-  const namesById = await resolvePublicIds(supabase, publicIds);
+  const studentsById = await resolvePublicIds(supabase, publicIds);
+  const found = publicIds.filter((publicId) => studentsById.has(publicId));
 
   return jsonResponse({
     ok: true,
-    participants: publicIds
-      .filter((publicId) => namesById.has(publicId))
-      .map((publicId) => ({ public_id: publicId, name: namesById.get(publicId) })),
-    not_found: publicIds.filter((publicId) => !namesById.has(publicId)),
+    participants: found
+      .filter((publicId) => belongsToActivityStage(activity, studentsById.get(publicId)!))
+      .map((publicId) => ({ public_id: publicId, name: studentsById.get(publicId)!.name })),
+    not_found: publicIds.filter((publicId) => !studentsById.has(publicId)),
+    wrong_group: found.filter(
+      (publicId) => !belongsToActivityStage(activity, studentsById.get(publicId)!)
+    ),
   });
 }
 
@@ -217,11 +247,11 @@ async function handleBuildUrl(
     publicIds.forEach((publicId) => publicIdsToResolve.add(publicId));
   }
 
-  const namesById = publicIdsToResolve.size > 0
+  const studentsById = publicIdsToResolve.size > 0
     ? await resolvePublicIds(supabase, [...publicIdsToResolve])
-    : new Map<string, string>();
+    : new Map<string, ResolvedStudent>();
 
-  const notFound = [...publicIdsToResolve].filter((publicId) => !namesById.has(publicId));
+  const notFound = [...publicIdsToResolve].filter((publicId) => !studentsById.has(publicId));
 
   if (notFound.length > 0) {
     return jsonResponse(
@@ -230,6 +260,33 @@ async function handleBuildUrl(
         error: "public_ids_not_found",
         not_found: notFound,
         message: `No se han encontrado estos identificadores: ${notFound.join(", ")}.`,
+      },
+      400
+    );
+  }
+
+  // Cada identificador tiene que ser de un grupo de la etapa de su actividad.
+  const wrongGroup: { activity: PaymentActivityKey; public_id: string }[] = [];
+
+  for (const activity of PAYMENT_ACTIVITIES) {
+    if (activity.participantInput !== "public_id") continue;
+
+    for (const publicId of valuesByActivity.get(activity.key) ?? []) {
+      if (!belongsToActivityStage(activity, studentsById.get(publicId)!)) {
+        wrongGroup.push({ activity: activity.key, public_id: publicId });
+      }
+    }
+  }
+
+  if (wrongGroup.length > 0) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "public_ids_wrong_group",
+        wrong_group: wrongGroup,
+        message: `Estos identificadores no pertenecen a un grupo de la actividad en la que se han puesto: ${
+          wrongGroup.map((item) => item.public_id).join(", ")
+        }.`,
       },
       400
     );
@@ -248,7 +305,7 @@ async function handleBuildUrl(
     const values = enabledKeys.has(activity.key) ? valuesByActivity.get(activity.key) ?? [] : [];
 
     const names = activity.participantInput === "public_id"
-      ? values.map((publicId) => namesById.get(publicId)!)
+      ? values.map((publicId) => studentsById.get(publicId)!.name)
       : values.map((name) => name.slice(0, MAX_NAME_LENGTH));
 
     if (names.length > 0) {
@@ -263,8 +320,14 @@ async function handleBuildUrl(
   return jsonResponse({ ok: true, access_url: url.toString() });
 }
 
-/** Devuelve un mapa identificador -> nombre del alumno, solo de los que existen. */
+/**
+ * Devuelve, solo para los identificadores que existen, el nombre del alumno y
+ * la etapa de su grupo (null si el grupo no es de preconfirmación ni de
+ * confirmación, o si no tiene grupo).
+ */
 async function resolvePublicIds(supabase: SupabaseClient, publicIds: string[]) {
+  const studentsById = new Map<string, ResolvedStudent>();
+
   const { data: accessRows, error: accessError } = await supabase
     .from("student_public_access")
     .select("public_id, student_id")
@@ -278,12 +341,12 @@ async function resolvePublicIds(supabase: SupabaseClient, publicIds: string[]) {
   const studentIds = [...new Set((accessRows ?? []).map((row) => row.student_id).filter(Boolean))];
 
   if (studentIds.length === 0) {
-    return new Map<string, string>();
+    return studentsById;
   }
 
   const { data: studentRows, error: studentsError } = await supabase
     .from("students")
-    .select("id, name")
+    .select("id, name, group_id")
     .in("id", studentIds);
 
   if (studentsError) {
@@ -291,23 +354,49 @@ async function resolvePublicIds(supabase: SupabaseClient, publicIds: string[]) {
     throw studentsError;
   }
 
-  const namesByStudentId = new Map<string, string>(
-    (studentRows ?? []).map((row): [string, string] => [
-      String(row.id),
-      String(row.name ?? "").trim(),
-    ])
-  );
+  const groupIds = [...new Set((studentRows ?? []).map((row) => row.group_id).filter(Boolean))];
+  const groupNamesById = new Map<string, string>();
 
-  const namesById = new Map<string, string>();
+  if (groupIds.length > 0) {
+    const { data: groupRows, error: groupsError } = await supabase
+      .from("groups")
+      .select("id, name")
+      .in("id", groupIds);
 
-  for (const row of accessRows ?? []) {
-    const name = namesByStudentId.get(row.student_id);
-    if (name) {
-      namesById.set(String(row.public_id).toUpperCase(), name);
+    if (groupsError) {
+      console.error("Error fetching groups:", groupsError);
+      throw groupsError;
+    }
+
+    for (const row of groupRows ?? []) {
+      groupNamesById.set(String(row.id), String(row.name ?? ""));
     }
   }
 
-  return namesById;
+  const studentsByStudentId = new Map<string, ResolvedStudent>();
+
+  for (const row of studentRows ?? []) {
+    const name = String(row.name ?? "").trim();
+    if (!name) continue;
+
+    studentsByStudentId.set(String(row.id), {
+      name,
+      stage: stageFromGroupName(row.group_id ? groupNamesById.get(String(row.group_id)) : null),
+    });
+  }
+
+  for (const row of accessRows ?? []) {
+    const student = studentsByStudentId.get(String(row.student_id));
+    if (student) {
+      studentsById.set(String(row.public_id).toUpperCase(), student);
+    }
+  }
+
+  return studentsById;
+}
+
+function belongsToActivityStage(activity: PaymentActivity, student: ResolvedStudent) {
+  return !activity.requiredStage || student.stage === activity.requiredStage;
 }
 
 /**
