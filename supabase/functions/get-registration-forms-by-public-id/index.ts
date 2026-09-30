@@ -16,6 +16,8 @@ type RestrictedForm = {
   open_date: string | null;
   close_date: string | null;
   access_type: "restricted";
+  form_type: "registration" | "payment";
+  payment_activities: string[];
   already_answered: boolean;
 };
 
@@ -208,7 +210,9 @@ async function getRestrictedFormsForStudent(
       prefill_parent_email_entry,
       prefill_school_entry,
       prefill_birth_date_entry,
-      prefill_group_entry
+      prefill_group_entry,
+      form_type,
+      payment_activities
     `)
     .in("id", formIds)
     .eq("active", true)
@@ -245,7 +249,10 @@ async function getRestrictedFormsForStudent(
       id: form.id,
       title: form.title,
       description: form.description,
-      url: buildPrefilledUrl(form.url, {
+      // Los formularios de pago no llevan los datos del alumno: se
+      // prerrellenan con los participantes que se indican en el portal
+      // (payment-form-access).
+      url: form.form_type === "payment" ? form.url : buildPrefilledUrl(form.url, {
         [form.prefill_public_id_entry]: publicId,
         [form.prefill_name_entry]: studentRow.name,
         [form.prefill_dni_entry]: studentRow.dni,
@@ -260,6 +267,8 @@ async function getRestrictedFormsForStudent(
       open_date: form.open_date,
       close_date: form.close_date,
       access_type: "restricted",
+      form_type: form.form_type === "payment" ? "payment" : "registration",
+      payment_activities: form.payment_activities ?? [],
       already_answered: answeredFormIds.has(form.id),
     }))
     .sort((a, b) => {
