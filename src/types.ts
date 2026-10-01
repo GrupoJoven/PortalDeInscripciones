@@ -49,6 +49,8 @@ export interface RegistrationForm {
   response_school_question_id: string | null;
   response_birth_date_question_id: string | null;
   response_group_question_id: string | null;
+  response_address_question_id: string | null;
+  response_postal_code_question_id: string | null;
   form_type: FormType;
   payment_activities: PaymentActivityKey[];
   payment_activity_prices: Partial<Record<PaymentActivityKey, number>>;
@@ -100,6 +102,8 @@ export interface EditingForm {
   response_school_question_id: string;
   response_birth_date_question_id: string;
   response_group_question_id: string;
+  response_address_question_id: string;
+  response_postal_code_question_id: string;
   form_type: FormType;
   payment_activities: PaymentActivityKey[];
   /** Importes tal cual se escriben en el panel; se validan al guardar. */
@@ -227,6 +231,30 @@ export interface DniExtractedData {
   fecha_validez_trasera?: string | null;
   /** true si anverso y reverso no coinciden en la fecha de validez. */
   fecha_validez_conflicto?: boolean;
+}
+
+/** Fila de `dni_address_comparisons`: domicilio prerrellenado vs. enviado. */
+export interface DniAddressComparison {
+  id: string;
+  registration_form_id: string;
+  google_form_id: string;
+  response_id: string;
+  submitted_at: string | null;
+  contact_email: string | null;
+  dni: string | null;
+  minor_without_dni: boolean | null;
+  status: 'match' | 'mismatch' | 'not_compared' | 'no_snapshot';
+  address_expected: string | null;
+  address_received: string | null;
+  address_matches: boolean | null;
+  postal_code_expected: string | null;
+  postal_code_received: string | null;
+  postal_code_matches: boolean | null;
+  admin_notified_at: string | null;
+  contact_notified_at: string | null;
+  notification_error: string | null;
+  reviewed_at: string | null;
+  created_at: string;
 }
 
 export interface DniStartResponse {

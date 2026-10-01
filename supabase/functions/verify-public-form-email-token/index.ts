@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { guardarPrefillDni } from "../_shared/dniPrefillSnapshot.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -214,6 +215,8 @@ async function getPublicFormAccessUrl(
   }
 
   const dniSession = await loadConfirmedDniSession(supabase, dniSessionId, formId);
+
+  await guardarPrefillDni(supabase, formRow, dniSession, email);
 
   return buildPublicFormAccessUrl(formRow, email, dniSession);
 }

@@ -15,12 +15,14 @@ import {
   AlertCircle,
   Mail,
   Receipt,
-  ClipboardList
+  ClipboardList,
+  MapPin
 } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 import Login from './Login';
+import DniAddressComparisonsModal from './DniAddressComparisonsModal';
 import { supabase } from '../lib/supabaseClient';
 import {
   DEFAULT_SIBLING_DISCOUNTS,
@@ -102,6 +104,7 @@ export default function AdminPanel({
   const [formModalError, setFormModalError] = useState<string | null>(null);
   const [syncingWatch, setSyncingWatch] = useState(false);
   const [copySourceSelectorOpen, setCopySourceSelectorOpen] = useState(false);
+  const [addressComparisonsForm, setAddressComparisonsForm] = useState<RegistrationForm | null>(null);
 
   const blockedFormIds = [
     '1688ad22-3c20-4474-97d1-8e65b7cd2c5b',
@@ -411,6 +414,8 @@ export default function AdminPanel({
       response_school_question_id: '',
       response_birth_date_question_id: '',
       response_group_question_id: '',
+      response_address_question_id: '',
+      response_postal_code_question_id: '',
       form_type: 'registration',
       payment_activities: [],
       payment_activity_prices: {},
@@ -483,6 +488,8 @@ export default function AdminPanel({
       response_school_question_id: form.response_school_question_id ?? '',
       response_birth_date_question_id: form.response_birth_date_question_id ?? '',
       response_group_question_id: form.response_group_question_id ?? '',
+      response_address_question_id: form.response_address_question_id ?? '',
+      response_postal_code_question_id: form.response_postal_code_question_id ?? '',
       form_type: form.form_type ?? 'registration',
       payment_activities: form.payment_activities ?? [],
       payment_prefill_entries: parsePaymentPrefillEntries(form.payment_prefill_entries),
@@ -596,6 +603,12 @@ export default function AdminPanel({
       if (editingForm.google_form_watch_enabled) {
         nextForm.response_parent_email_question_id =
           sourceForm.response_parent_email_question_id ?? '';
+
+        if (editingForm.dni_verification_enabled) {
+          nextForm.response_address_question_id = sourceForm.response_address_question_id ?? '';
+          nextForm.response_postal_code_question_id =
+            sourceForm.response_postal_code_question_id ?? '';
+        }
       }
     }
 
@@ -1088,6 +1101,22 @@ export default function AdminPanel({
       response_group_question_id:
         editingForm.access_type === 'restricted' && editingForm.response_group_question_id.trim()
           ? editingForm.response_group_question_id.trim()
+          : null,
+
+      response_address_question_id:
+        editingForm.access_type === 'public' &&
+          editingForm.dni_verification_enabled &&
+          editingForm.google_form_watch_enabled &&
+          editingForm.response_address_question_id.trim()
+          ? editingForm.response_address_question_id.trim()
+          : null,
+
+      response_postal_code_question_id:
+        editingForm.access_type === 'public' &&
+          editingForm.dni_verification_enabled &&
+          editingForm.google_form_watch_enabled &&
+          editingForm.response_postal_code_question_id.trim()
+          ? editingForm.response_postal_code_question_id.trim()
           : null,
 
       form_type: editingForm.form_type,
@@ -1674,6 +1703,16 @@ export default function AdminPanel({
                   </div>
 
                   <div className="flex items-center gap-3 w-full md:w-auto overflow-x-auto pb-2 md:pb-0">
+                    {form.dni_verification_enabled && (
+                      <button
+                        onClick={() => setAddressComparisonsForm(form)}
+                        className="p-2 bg-amber-50 text-amber-700 rounded-xl hover:bg-amber-100 transition-all"
+                        title="Domicilio: DNI vs. respuesta"
+                      >
+                        <MapPin className="w-5 h-5" />
+                      </button>
+                    )}
+
                     {/* Verificar si el formulario está bloqueado */}
                     {blockedFormIds.includes(form.id) ? (
                       <p className="text-red-500 font-semibold">Este formulario está bloqueado para edición y eliminación.</p>
@@ -1970,6 +2009,14 @@ export default function AdminPanel({
             </div>
           </motion.div>
         </div>
+      )}
+
+      {addressComparisonsForm && (
+        <DniAddressComparisonsModal
+          form={addressComparisonsForm}
+          userId={user.id}
+          onClose={() => setAddressComparisonsForm(null)}
+        />
       )}
 
       {editingForm && (
@@ -3289,6 +3336,50 @@ export default function AdminPanel({
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
                       />
                     </div>
+
+                    {editingForm.dni_verification_enabled && (
+                      <>
+                        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mt-6 mb-4">
+                          <p className="text-sm text-amber-800">
+                            Opcional. Si los rellenas, cada respuesta se compara con la
+                            <span className="font-semibold"> dirección</span> y el
+                            <span className="font-semibold"> código postal</span> prerrellenados a partir del DNI.
+                            Si no coinciden, la respuesta se mantiene, pero se avisa por correo a administración
+                            y al email de contacto de que se revisará manualmente.
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-semibold text-slate-600 mb-2">
+                              QUESTION ID DE LA DIRECCIÓN
+                            </label>
+                            <input
+                              type="text"
+                              value={editingForm.response_address_question_id}
+                              onChange={(e) =>
+                                setEditingForm({ ...editingForm, response_address_question_id: e.target.value })
+                              }
+                              placeholder="29bd3893"
+                              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-semibold text-slate-600 mb-2">
+                              QUESTION ID DEL CÓDIGO POSTAL
+                            </label>
+                            <input
+                              type="text"
+                              value={editingForm.response_postal_code_question_id}
+                              onChange={(e) =>
+                                setEditingForm({ ...editingForm, response_postal_code_question_id: e.target.value })
+                              }
+                              placeholder="5affe64e"
+                              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

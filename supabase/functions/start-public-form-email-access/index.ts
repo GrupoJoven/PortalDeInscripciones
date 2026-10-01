@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { guardarPrefillDni } from "../_shared/dniPrefillSnapshot.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -164,6 +165,8 @@ Deno.serve(async (req) => {
     }
 
     if (verifiedRow) {
+      await guardarPrefillDni(supabase, formRow, dniSession, normalizedEmail);
+
       return jsonResponse(
         {
           ok: true,

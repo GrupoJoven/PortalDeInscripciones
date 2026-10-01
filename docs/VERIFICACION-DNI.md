@@ -539,6 +539,104 @@ explicó para Cloud Run.
 
 ---
 
+## Paso 11 — Comparar el domicilio prerrellenado con el enviado
+
+La dirección y el código postal llegan prerrellenados desde el DNI, pero la
+familia puede cambiarlos antes de enviar. Con este paso, cada respuesta se
+compara con lo que se prerrellenó y, si no coincide:
+
+- la respuesta **se mantiene** (no se borra);
+- se envía un correo a administración (`grupojoven@sanpas.es`, o lo que
+  pongas en el secreto `DNI_ADDRESS_ALERT_EMAIL`);
+- se envía un correo al EMAIL DE CONTACTO avisando de que la inscripción se
+  revisará manualmente y de que quizás se le pida más información;
+- queda registrado para revisarlo en el panel (botón del icono de ubicación
+  en cada formulario con verificación de DNI).
+
+Solo funciona en formularios con **seguimiento** activado (es el
+seguimiento el que lee las respuestas).
+
+### 11.1 Ejecutar la migración
+
+Igual que en el paso 3, en el editor SQL: pega el contenido de
+`supabase/migrations/20261001120000_dni_address_comparison.sql` y pulsa
+**Run**.
+
+**Comprobación:**
+
+```sql
+select count(*) from public.dni_prefill_snapshots;
+select count(*) from public.dni_address_comparisons;
+```
+
+Las dos deben devolver `0`.
+
+### 11.2 Redesplegar las funciones tocadas
+
+```powershell
+supabase functions deploy start-public-form-email-access
+supabase functions deploy verify-public-form-email-token
+supabase functions deploy google-forms-process-responses
+```
+
+Opcional, si los avisos deben ir a otra dirección:
+
+```powershell
+supabase secrets set DNI_ADDRESS_ALERT_EMAIL=<correo> --project-ref pqycvrpdyebshkfaxzmi
+```
+
+### 11.3 Configurar el formulario
+
+En el panel, edita el formulario → **Campos de seguimiento de preguntas para
+acceso libre** → rellena **QUESTION ID DE LA DIRECCIÓN** y **QUESTION ID DEL
+CÓDIGO POSTAL** (se sacan igual que el del email de contacto). Son
+opcionales: si se deja uno en blanco, ese dato no se compara.
+
+Si el formulario está bloqueado para edición en el panel, se puede hacer por
+SQL (cambia el título):
+
+```sql
+update public.registration_forms
+set response_address_question_id     = '29bd3893',
+    response_postal_code_question_id = '5affe64e'
+where title = '<TÍTULO DEL FORMULARIO>';
+```
+
+### 11.4 Probarlo
+
+Haz una inscripción de prueba completa (paso 8) y, en el formulario de
+Google, **cambia la dirección** antes de enviar. A los pocos minutos deben
+llegar los dos correos y, en el panel, el botón del icono de ubicación debe
+mostrar la respuesta en "Pendientes de revisar". Una segunda inscripción sin
+tocar nada debe aparecer solo en "Todas las respuestas", como "Coincide".
+
+### Cómo funciona
+
+- **Qué se compara.** Al generar el enlace del formulario se guarda lo que
+  se prerrellenó (`dni_prefill_snapshots`): DNI, dirección, código postal y
+  email de contacto. Hace falta guardarlo aparte porque la sesión de
+  verificación se borra a las 24 h. Estas filas se borran solas a los
+  **7 días**, con la limpieza del paso 9.
+- **Cómo se encuentra el prerrelleno de una respuesta.** Por formulario +
+  EMAIL DE CONTACTO. Si con ese email se abrieron varios enlaces (hermanos,
+  o alguien que repitió la verificación), se usan los cuyo DNI aparece en
+  la respuesta, y basta con que uno coincida.
+- **Qué cuenta como "cambiado".** Se ignoran mayúsculas, tildes, signos y
+  espacios (`VALÈNCIA` = `valencia`, `C/ Cuba, 4` = `C CUBA 4`). Cualquier
+  otra diferencia cuenta, también dejar en blanco un dato que venía
+  prerrellenado o desarrollar una abreviatura (`C/` → `CALLE`). En el
+  código postal solo se comparan los dígitos.
+- **Qué no se compara.** Si no se pudo inferir el código postal (paso 10),
+  la familia lo escribe a mano y no hay nada con qué compararlo.
+- **Estados** que verás en el panel: *Coincide*, *No coincide*, *Sin datos
+  que comparar* (no se prerrellenó nada comparable) y *Prerrelleno no
+  encontrado* (por ejemplo, respuestas de antes de este paso). Solo *No
+  coincide* envía correos.
+- **Cada respuesta se compara una sola vez**, así que reprocesarla no repite
+  los correos. Si un correo falla, se ve en el panel ("Error al avisar").
+
+---
+
 ## Si algo falla
 
 | Síntoma | Causa probable | Solución |

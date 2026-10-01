@@ -4,6 +4,8 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const APP_BASE_URL = Deno.env.get('APP_BASE_URL')!
 const INTERNAL_EMAIL_FUNCTION_SECRET = Deno.env.get('INTERNAL_EMAIL_FUNCTION_SECRET')!
+// A quién se avisa cuando el domicilio enviado no coincide con el del DNI.
+const DNI_ADDRESS_ALERT_EMAIL = Deno.env.get('DNI_ADDRESS_ALERT_EMAIL') || 'grupojoven@sanpas.es'
 
 type ProcessedResponseRow = {
   id: string
@@ -26,6 +28,16 @@ type RegistrationFormRow = {
   response_school_question_id: string | null
   response_birth_date_question_id: string | null
   response_group_question_id: string | null
+  dni_verification_enabled: boolean
+  response_address_question_id: string | null
+  response_postal_code_question_id: string | null
+}
+
+type DniPrefillSnapshotRow = {
+  dni: string | null
+  address: string | null
+  postal_code: string | null
+  minor_without_dni: boolean
 }
 
 type MismatchRow = {
@@ -409,6 +421,321 @@ function buildRestrictedMismatchEmail(publicId: string, mismatches: MismatchRow[
   return { subject, html }
 }
 
+// ---------------------------------------------------------------------
+// Comparación del domicilio prerrellenado desde el DNI con el enviado
+// ---------------------------------------------------------------------
+
+/**
+ * Para decidir si "es lo mismo" se ignoran mayúsculas, tildes, signos y
+ * espacios: no tiene sentido avisar porque alguien haya pasado VALÈNCIA a
+ * VALENCIA o quitado una coma. En el registro se guardan los textos tal cual.
+ */
+function normalizeAddress(value: string | null | undefined): string {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .trim()
+}
+
+function normalizePostalCode(value: string | null | undefined): string {
+  return (value ?? '').replace(/\D/g, '')
+}
+
+function normalizeAlphanumeric(value: string | null | undefined): string {
+  return (value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+/** Todo el texto respondido, para buscar en él el DNI prerrellenado. */
+function allAnswersText(answers: Record<string, any>): string {
+  return Object.values(answers ?? {})
+    .flatMap((answer: any) => answer?.textAnswers?.answers ?? [])
+    .map((a: any) => normalizeAlphanumeric(a?.value))
+    .join('|')
+}
+
+type AddressComparison = {
+  snapshot: DniPrefillSnapshotRow
+  status: 'match' | 'mismatch' | 'not_compared'
+  addressReceived: string | null
+  addressMatches: boolean | null
+  postalCodeReceived: string | null
+  postalCodeMatches: boolean | null
+}
+
+function compareWithSnapshot(
+  snapshot: DniPrefillSnapshotRow,
+  form: RegistrationFormRow,
+  answers: Record<string, any>
+): AddressComparison {
+  const addressReceived = extractAnswerValue(answers, form.response_address_question_id)
+  const postalCodeReceived = extractAnswerValue(answers, form.response_postal_code_question_id)
+
+  // Solo se compara lo que se prerrellenó y cuya pregunta está configurada.
+  // Una respuesta vacía donde había dato prerrellenado cuenta como cambio.
+  const addressMatches =
+    form.response_address_question_id && snapshot.address
+      ? normalizeAddress(addressReceived) === normalizeAddress(snapshot.address)
+      : null
+
+  const postalCodeMatches =
+    form.response_postal_code_question_id && snapshot.postal_code
+      ? normalizePostalCode(postalCodeReceived) === normalizePostalCode(snapshot.postal_code)
+      : null
+
+  const status =
+    addressMatches === false || postalCodeMatches === false
+      ? 'mismatch'
+      : addressMatches === null && postalCodeMatches === null
+        ? 'not_compared'
+        : 'match'
+
+  return {
+    snapshot,
+    status,
+    addressReceived,
+    addressMatches,
+    postalCodeReceived,
+    postalCodeMatches,
+  }
+}
+
+/**
+ * Busca qué prerrelleno corresponde a esta respuesta y la compara con él.
+ *
+ * La respuesta y el prerrelleno se enlazan por formulario + EMAIL DE
+ * CONTACTO (que ya está verificado a estas alturas). Si con ese email se
+ * abrieron varios enlaces (hermanos, o alguien que repitió la verificación),
+ * se prefieren los cuyo DNI aparece en la respuesta, y entre ellos basta con
+ * que uno coincida.
+ */
+async function compareDniAddress(
+  supabase: ReturnType<typeof createClient>,
+  row: ProcessedResponseRow,
+  form: RegistrationFormRow,
+  contactEmail: string,
+  respondentEmail: string
+): Promise<AddressComparison['status'] | 'no_snapshot' | null> {
+  if (!form.dni_verification_enabled) return null
+  if (!form.response_address_question_id && !form.response_postal_code_question_id) return null
+
+  const answers = row.raw_response?.answers ?? {}
+  const submittedAt = row.raw_response?.lastSubmittedTime ?? row.raw_response?.createTime ?? null
+
+  const { data: snapshots, error: snapshotsError } = await supabase
+    .from('dni_prefill_snapshots')
+    .select('dni, address, postal_code, minor_without_dni')
+    .eq('registration_form_id', form.id)
+    .eq('normalized_email', contactEmail)
+    .order('created_at', { ascending: false })
+    .limit(20)
+
+  if (snapshotsError) {
+    throw snapshotsError
+  }
+
+  const candidates = (snapshots ?? []) as DniPrefillSnapshotRow[]
+  const answersText = allAnswersText(answers)
+  const sameDni = candidates.filter((snapshot) => {
+    const dni = normalizeAlphanumeric(snapshot.dni)
+    return dni.length >= 8 && answersText.includes(dni)
+  })
+  const pool = sameDni.length > 0 ? sameDni : candidates
+  const comparisons = pool.map((snapshot) => compareWithSnapshot(snapshot, form, answers))
+
+  const best =
+    comparisons.find((c) => c.status === 'match') ??
+    comparisons.find((c) => c.status === 'not_compared') ??
+    comparisons[0] ??
+    null
+
+  const status = best?.status ?? 'no_snapshot'
+
+  const { data: inserted, error: insertError } = await supabase
+    .from('dni_address_comparisons')
+    .insert({
+      registration_form_id: form.id,
+      google_form_id: row.google_form_id,
+      response_id: row.response_id,
+      submitted_at: submittedAt,
+      contact_email: contactEmail,
+      dni: best?.snapshot.dni ?? null,
+      minor_without_dni: best?.snapshot.minor_without_dni ?? null,
+      status,
+      address_expected: best?.snapshot.address ?? null,
+      address_received: best
+        ? best.addressReceived
+        : extractAnswerValue(answers, form.response_address_question_id),
+      address_matches: best?.addressMatches ?? null,
+      postal_code_expected: best?.snapshot.postal_code ?? null,
+      postal_code_received: best
+        ? best.postalCodeReceived
+        : extractAnswerValue(answers, form.response_postal_code_question_id),
+      postal_code_matches: best?.postalCodeMatches ?? null,
+    })
+    .select('id')
+    .single()
+
+  if (insertError) {
+    // Ya se comparó en una pasada anterior (y, si tocaba, ya se avisó).
+    if (insertError.code === '23505') return status
+    throw insertError
+  }
+
+  if (status !== 'mismatch' || !best) return status
+
+  const errors: string[] = []
+  const notifiedAt: Record<string, string> = {}
+
+  try {
+    const adminEmail = buildDniAddressAdminEmail(form.title, contactEmail, submittedAt, best)
+    await sendPolicyEmail({
+      to: DNI_ADDRESS_ALERT_EMAIL,
+      subject: adminEmail.subject,
+      html: adminEmail.html,
+    })
+    notifiedAt.admin_notified_at = new Date().toISOString()
+  } catch (err) {
+    errors.push(`Administración: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  try {
+    const contactEmailContent = buildDniAddressContactEmail(form.title, best)
+    await sendPolicyEmailWithFallback({
+      primaryTo: contactEmail,
+      fallbackTo: respondentEmail,
+      subject: contactEmailContent.subject,
+      html: withLegalDisclaimer(contactEmailContent.html),
+    })
+    notifiedAt.contact_notified_at = new Date().toISOString()
+  } catch (err) {
+    errors.push(`Contacto: ${err instanceof Error ? err.message : String(err)}`)
+  }
+
+  const { error: updateError } = await supabase
+    .from('dni_address_comparisons')
+    .update({
+      ...notifiedAt,
+      notification_error: errors.length > 0 ? errors.join(' | ') : null,
+    })
+    .eq('id', inserted.id)
+
+  if (updateError) {
+    console.error('Error guardando el estado de los avisos de domicilio:', updateError)
+  }
+
+  return status
+}
+
+function dniAddressMismatchListHtml(comparison: AddressComparison) {
+  const rows: MismatchRow[] = []
+
+  if (comparison.addressMatches === false) {
+    rows.push({
+      field: 'DIRECCIÓN DE LA RESIDENCIA HABITUAL',
+      expected: comparison.snapshot.address ?? '',
+      received: comparison.addressReceived ?? '',
+    })
+  }
+
+  if (comparison.postalCodeMatches === false) {
+    rows.push({
+      field: 'CÓDIGO POSTAL',
+      expected: comparison.snapshot.postal_code ?? '',
+      received: comparison.postalCodeReceived ?? '',
+    })
+  }
+
+  return rows
+    .map(
+      (m) => `
+        <li>
+          <strong>${escapeHtml(m.field)}</strong>:
+          leído del DNI "<strong>${escapeHtml(m.expected)}</strong>",
+          indicado en el formulario "<strong>${escapeHtml(m.received || '(en blanco)')}</strong>"
+        </li>
+      `
+    )
+    .join('')
+}
+
+function buildDniAddressContactEmail(formTitle: string, comparison: AddressComparison) {
+  const subject = 'Revisión de tu inscripción'
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
+      <h2>Revisión de tu inscripción</h2>
+      <p>Hola,</p>
+      <p>
+        Hemos recibido tu inscripción en <strong>${escapeHtml(formTitle)}</strong>. Al revisarla,
+        hemos visto que el domicilio indicado en el formulario no coincide con el que se leyó del DNI
+        durante la verificación:
+      </p>
+      <ul>
+        ${dniAddressMismatchListHtml(comparison)}
+      </ul>
+      <p>
+        Tu inscripción <strong>no se ha eliminado</strong>, pero va a ser revisada manualmente.
+        Es posible que nos pongamos de nuevo en contacto contigo para solicitarte más información.
+      </p>
+      <p>
+        Este mensaje ha sido enviado automáticamente. No debes responder a este correo,
+        ya que la dirección desde la que se envía no está supervisada y nadie leerá tu respuesta.
+        Si quieres aclarar algo, escribe a <strong>grupojoven@sanpas.es</strong>.
+      </p>
+      <p>
+        Portal de inscripciones:
+        <a href="${escapeHtml(APP_BASE_URL)}">${escapeHtml(APP_BASE_URL)}</a>
+      </p>
+      <p>Un saludo.</p>
+    </div>
+  `
+
+  return { subject, html }
+}
+
+function buildDniAddressAdminEmail(
+  formTitle: string,
+  contactEmail: string,
+  submittedAt: string | null,
+  comparison: AddressComparison
+) {
+  const subject = `Domicilio modificado en "${formTitle}"`
+  const submittedText = submittedAt
+    ? new Date(submittedAt).toLocaleString('es-ES', { timeZone: 'Europe/Madrid' })
+    : 'desconocida'
+  const dniText = comparison.snapshot.minor_without_dni
+    ? `${comparison.snapshot.dni ?? ''} (de un progenitor: menor sin DNI)`
+    : comparison.snapshot.dni ?? ''
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
+      <h2>Domicilio distinto al del DNI</h2>
+      <p>
+        Una respuesta del formulario <strong>${escapeHtml(formTitle)}</strong> tiene un domicilio
+        distinto del que se prerrellenó a partir del DNI.
+      </p>
+      <ul>
+        <li><strong>EMAIL DE CONTACTO</strong>: ${escapeHtml(contactEmail)}</li>
+        <li><strong>DNI prerrellenado</strong>: ${escapeHtml(dniText)}</li>
+        <li><strong>Enviada</strong>: ${escapeHtml(submittedText)}</li>
+      </ul>
+      <p>Datos que no coinciden:</p>
+      <ul>
+        ${dniAddressMismatchListHtml(comparison)}
+      </ul>
+      <p>
+        La respuesta se mantiene y a la familia se le ha avisado de que se revisará manualmente.
+        Puedes ver todas las discrepancias y marcarlas como revisadas en el panel de administración:
+        <a href="${escapeHtml(APP_BASE_URL)}/admin">${escapeHtml(APP_BASE_URL)}/admin</a>
+      </p>
+    </div>
+  `
+
+  return { subject, html }
+}
+
 Deno.serve(async (req) => {
   try {
     requireEnv(SUPABASE_URL, 'SUPABASE_URL')
@@ -439,6 +766,7 @@ Deno.serve(async (req) => {
     let restrictedMismatch = 0
     let processingErrors = 0
     let queuedForDeletion = 0
+    let dniAddressMismatch = 0
 
     for (const row of rows) {
       try {
@@ -461,7 +789,10 @@ Deno.serve(async (req) => {
             response_parent_email_question_id,
             response_school_question_id,
             response_birth_date_question_id,
-            response_group_question_id
+            response_group_question_id,
+            dni_verification_enabled,
+            response_address_question_id,
+            response_postal_code_question_id
           `)
           .eq('id', row.registration_form_id)
           .single()
@@ -492,6 +823,18 @@ Deno.serve(async (req) => {
           }
 
           if (verificationRow) {
+            // Un fallo al comparar el domicilio no debe invalidar una
+            // inscripción correcta: se registra y se sigue.
+            try {
+              const comparison = await compareDniAddress(supabase, row, form, normalizedEmail, respondentEmail)
+              if (comparison === 'mismatch') dniAddressMismatch += 1
+            } catch (comparisonError) {
+              console.error(
+                `Error comparando el domicilio de la respuesta ${row.response_id}:`,
+                comparisonError
+              )
+            }
+
             await updateProcessedResponse(
               supabase,
               row.id,
@@ -719,6 +1062,7 @@ Deno.serve(async (req) => {
       email_sent_restricted_unknown_id: restrictedUnknownId,
       email_sent_restricted_data_mismatch: restrictedMismatch,
       queued_for_deletion: queuedForDeletion,
+      dni_address_mismatch: dniAddressMismatch,
       processing_error: processingErrors,
     })
   } catch (err) {
