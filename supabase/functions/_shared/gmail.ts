@@ -184,12 +184,29 @@ function buildMimeMessage({
   return [
     `From: ${from}`,
     `To: ${to}`,
-    `Subject: ${subject}`,
+    `Subject: ${encodeHeaderValue(subject)}`,
     "MIME-Version: 1.0",
     'Content-Type: text/html; charset="UTF-8"',
     "",
     html,
   ].join("\r\n");
+}
+
+/**
+ * Las cabeceras de un correo solo admiten ASCII: un asunto con tildes hay
+ * que mandarlo codificado (RFC 2047), o el cliente de correo lo muestra como
+ * "RevisiÃ³n". El charset="UTF-8" de Content-Type solo afecta al cuerpo.
+ */
+function encodeHeaderValue(value: string) {
+  if (/^[\x20-\x7e]*$/.test(value)) return value;
+
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return `=?UTF-8?B?${btoa(binary)}?=`;
 }
 
 function base64UrlEncode(input: string | Uint8Array) {
