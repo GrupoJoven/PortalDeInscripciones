@@ -7,6 +7,7 @@ import {
   gridColumnForCount,
   isPaymentActivityKey,
   joinParticipantNames,
+  parsePaymentPrefillEntries,
   stageFromGroupName,
 } from "../_shared/paymentActivities.ts";
 import type {
@@ -54,6 +55,7 @@ type PaymentFormRow = {
   close_date: string | null;
   form_type: string;
   payment_activities: string[] | null;
+  payment_prefill_entries: unknown;
 };
 
 Deno.serve(async (req) => {
@@ -87,7 +89,9 @@ Deno.serve(async (req) => {
 
     const { data: formRow, error: formError } = await supabase
       .from("registration_forms")
-      .select("id, url, active, access_type, open_date, close_date, form_type, payment_activities")
+      .select(
+        "id, url, active, access_type, open_date, close_date, form_type, payment_activities, payment_prefill_entries"
+      )
       .eq("id", formId)
       .maybeSingle<PaymentFormRow>();
 
@@ -301,20 +305,44 @@ async function handleBuildUrl(
     return jsonResponse({ ok: false, error: "internal_error" }, 500);
   }
 
+  const entries = parsePaymentPrefillEntries(form.payment_prefill_entries);
+
+  // Sin los identificadores de una actividad marcada no se puede prerrellenar
+  // ni su nombre ni su fila de la cuadrícula: es un fallo de configuración.
+  const misconfigured = [...enabledKeys].filter(
+    (key) => !entries[key]?.names || !entries[key]?.grid
+  );
+
+  if (misconfigured.length > 0) {
+    console.error(`Payment form ${form.id} without prefill entries for:`, misconfigured);
+    return jsonResponse(
+      {
+        ok: false,
+        error: "form_misconfigured",
+        message: "Este formulario de pago no está bien configurado. Avisa a los responsables.",
+      },
+      500
+    );
+  }
+
   for (const activity of PAYMENT_ACTIVITIES) {
+    const activityEntries = entries[activity.key];
     const values = enabledKeys.has(activity.key) ? valuesByActivity.get(activity.key) ?? [] : [];
 
     const names = activity.participantInput === "public_id"
       ? values.map((publicId) => studentsById.get(publicId)!.name)
       : values.map((name) => name.slice(0, MAX_NAME_LENGTH));
 
-    if (names.length > 0) {
-      url.searchParams.set(activity.namesEntry, joinParticipantNames(names));
+    if (names.length > 0 && activityEntries?.names) {
+      url.searchParams.set(activityEntries.names, joinParticipantNames(names));
     }
 
     // La cuadrícula exige respuesta en todas las filas: las actividades que
-    // no se pagan con este formulario, o sin participantes, van a 0.
-    url.searchParams.set(activity.gridRowEntry, gridColumnForCount(names.length));
+    // no se pagan con este formulario, o sin participantes, van a 0. Las no
+    // marcadas solo se rellenan si el formulario tiene su identificador.
+    if (activityEntries?.grid) {
+      url.searchParams.set(activityEntries.grid, gridColumnForCount(names.length));
+    }
   }
 
   return jsonResponse({ ok: true, access_url: url.toString() });

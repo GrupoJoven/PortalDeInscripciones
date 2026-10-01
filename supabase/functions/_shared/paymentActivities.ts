@@ -5,11 +5,13 @@
 // de participantes). No debe importar nada específico de Deno ni del
 // navegador.
 //
-// Cada actividad tiene dos preguntas en el formulario de Google:
-//   - `namesEntry`: pregunta de párrafo (opcional) con los nombres de los
+// Cada actividad tiene dos preguntas en el formulario de Google, cuyos
+// identificadores `entry.XXXXXXXXX` se configuran en cada formulario
+// (`payment_prefill_entries`, ver `PaymentPrefillEntries`):
+//   - `names`: pregunta de párrafo (opcional) con los nombres de los
 //     participantes, todos juntos en un único texto.
-//   - `gridRowEntry`: fila de la cuadrícula "INDIQUE LAS ACTIVIDADES PAGADAS",
-//     donde se marca en la columna cuántos hijos participan (0 si ninguno).
+//   - `grid`: fila de la cuadrícula "INDIQUE LAS ACTIVIDADES PAGADAS", donde
+//     se marca en la columna cuántos hijos participan (0 si ninguno).
 
 export type PaymentActivityKey =
   | 'acampada_postcomunion'
@@ -42,8 +44,6 @@ export interface PaymentActivity {
    * de esta etapa (ver `stageFromGroupName`).
    */
   requiredStage?: CatechesisStage;
-  namesEntry: string;
-  gridRowEntry: string;
 }
 
 export const PAYMENT_ACTIVITIES: readonly PaymentActivity[] = [
@@ -52,8 +52,6 @@ export const PAYMENT_ACTIVITIES: readonly PaymentActivity[] = [
     label: 'ACAMPADA POSTCOMUNIÓN/COMUNIÓN',
     gridRowLabel: 'ACAMPADA POST/COMU',
     participantInput: 'name',
-    namesEntry: 'entry.794595863',
-    gridRowEntry: 'entry.666452913',
   },
   {
     key: 'acampada_preconfirmacion',
@@ -61,8 +59,6 @@ export const PAYMENT_ACTIVITIES: readonly PaymentActivity[] = [
     gridRowLabel: 'ACAMPADA PRECONFIR',
     participantInput: 'public_id',
     requiredStage: 'preconfirmacion',
-    namesEntry: 'entry.546902884',
-    gridRowEntry: 'entry.2125776880',
   },
   {
     key: 'acampada_confirmacion',
@@ -70,8 +66,6 @@ export const PAYMENT_ACTIVITIES: readonly PaymentActivity[] = [
     gridRowLabel: 'ACAMPADA CONFIR',
     participantInput: 'public_id',
     requiredStage: 'confirmacion',
-    namesEntry: 'entry.1625976138',
-    gridRowEntry: 'entry.719210589',
   },
   {
     key: 'retiro_confirmacion',
@@ -79,16 +73,12 @@ export const PAYMENT_ACTIVITIES: readonly PaymentActivity[] = [
     gridRowLabel: 'RETIRO CONFIR',
     participantInput: 'public_id',
     requiredStage: 'confirmacion',
-    namesEntry: 'entry.1441405370',
-    gridRowEntry: 'entry.827903391',
   },
   {
     key: 'campamento_verano',
     label: 'CAMPAMENTO DE VERANO',
     gridRowLabel: 'CAMPAMENTO DE VERANO',
     participantInput: 'name',
-    namesEntry: 'entry.1482861068',
-    gridRowEntry: 'entry.1895229552',
   },
   {
     key: 'camino_preconfirmacion',
@@ -96,8 +86,6 @@ export const PAYMENT_ACTIVITIES: readonly PaymentActivity[] = [
     gridRowLabel: 'CAMINO PRECONFIR',
     participantInput: 'public_id',
     requiredStage: 'preconfirmacion',
-    namesEntry: 'entry.31537136',
-    gridRowEntry: 'entry.472469403',
   },
   {
     key: 'camino_confirmacion',
@@ -105,8 +93,6 @@ export const PAYMENT_ACTIVITIES: readonly PaymentActivity[] = [
     gridRowLabel: 'CAMINO CONFIR',
     participantInput: 'public_id',
     requiredStage: 'confirmacion',
-    namesEntry: 'entry.374068113',
-    gridRowEntry: 'entry.222505288',
   },
 ];
 
@@ -133,6 +119,35 @@ export const stageFromGroupName = (groupName: string | null | undefined): Catech
   if (normalized.includes('PRECONFIRMACION')) return 'preconfirmacion';
   if (normalized.includes('CONFIRMACION')) return 'confirmacion';
   return null;
+};
+
+/** Identificadores de las dos preguntas de una actividad en el formulario de Google. */
+export interface PaymentActivityEntries {
+  names: string;
+  grid: string;
+}
+
+export type PaymentPrefillEntries = Partial<Record<PaymentActivityKey, PaymentActivityEntries>>;
+
+/**
+ * Lee `payment_prefill_entries` tal cual viene de la base de datos, quedándose
+ * solo con actividades conocidas y valores de texto (vacíos si faltan).
+ */
+export const parsePaymentPrefillEntries = (value: unknown): PaymentPrefillEntries => {
+  const entries: PaymentPrefillEntries = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return entries;
+
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!isPaymentActivityKey(key) || !raw || typeof raw !== 'object') continue;
+
+    const { names, grid } = raw as Record<string, unknown>;
+    entries[key] = {
+      names: typeof names === 'string' ? names.trim() : '',
+      grid: typeof grid === 'string' ? grid.trim() : '',
+    };
+  }
+
+  return entries;
 };
 
 /** Límite de participantes por actividad en un mismo pago. */
