@@ -1,6 +1,9 @@
-import type { PaymentActivityKey } from '../supabase/functions/_shared/paymentActivities';
+import type {
+  PaymentActivityKey,
+  PaymentPrefillEntries,
+} from '../supabase/functions/_shared/paymentActivities';
 
-export type { PaymentActivityKey };
+export type { PaymentActivityKey, PaymentPrefillEntries };
 
 export type FormType = 'registration' | 'payment';
 
@@ -49,6 +52,7 @@ export interface RegistrationForm {
   form_type: FormType;
   payment_activities: PaymentActivityKey[];
   payment_activity_prices: Partial<Record<PaymentActivityKey, number>>;
+  payment_prefill_entries: unknown;
   payment_sibling_discount_pair: number | null;
   payment_sibling_discount_trio: number | null;
   payment_sibling_discount_four_plus: number | null;
@@ -100,6 +104,7 @@ export interface EditingForm {
   payment_activities: PaymentActivityKey[];
   /** Importes tal cual se escriben en el panel; se validan al guardar. */
   payment_activity_prices: Partial<Record<PaymentActivityKey, string>>;
+  payment_prefill_entries: PaymentPrefillEntries;
   payment_sibling_discount_pair: string;
   payment_sibling_discount_trio: string;
   payment_sibling_discount_four_plus: string;

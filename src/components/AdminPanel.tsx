@@ -25,6 +25,7 @@ import { supabase } from '../lib/supabaseClient';
 import {
   DEFAULT_SIBLING_DISCOUNTS,
   PAYMENT_ACTIVITIES,
+  parsePaymentPrefillEntries,
 } from '../../supabase/functions/_shared/paymentActivities';
 import {
   RegistrationForm,
@@ -111,6 +112,7 @@ export default function AdminPanel({
     '5ce1a334-29b8-46e5-b5c9-3a233ea65309',
     '57c22a7c-3514-4895-b7cf-234f27905a07',
     'a223b6b3-616e-41b0-9cf5-455ce0f64145',
+    '66d61b52-87f9-45a5-9ad8-478ebb660d6c', // PLANTILLA PAGO
   ];
 
 
@@ -412,6 +414,7 @@ export default function AdminPanel({
       form_type: 'registration',
       payment_activities: [],
       payment_activity_prices: {},
+      payment_prefill_entries: {},
       ...defaultDiscountInputs,
     });
     setFormModalError(null);
@@ -482,6 +485,7 @@ export default function AdminPanel({
       response_group_question_id: form.response_group_question_id ?? '',
       form_type: form.form_type ?? 'registration',
       payment_activities: form.payment_activities ?? [],
+      payment_prefill_entries: parsePaymentPrefillEntries(form.payment_prefill_entries),
       payment_activity_prices: Object.fromEntries(
         Object.entries(form.payment_activity_prices ?? {}).map(([key, price]) => [
           key,
@@ -529,11 +533,14 @@ export default function AdminPanel({
       // Verificar si el formulario está en la lista de formularios bloqueados
       if (!blockedFormIds.includes(form.id)) return false;
 
-      // Asegurarse de que el formulario tiene el mismo tipo de acceso
-      if (form.access_type !== currentForm.access_type) return false;
+      // Solo plantillas del mismo tipo de formulario (inscripción o pago)
+      if ((form.form_type ?? 'registration') !== currentForm.form_type) return false;
 
-      // Los formularios de pago no tienen identificadores que copiar
-      if (form.form_type === 'payment') return false;
+      // En los de inscripción, además, del mismo tipo de acceso. Las preguntas
+      // de los de pago son las mismas sean públicos o privados.
+      if (currentForm.form_type === 'registration' && form.access_type !== currentForm.access_type) {
+        return false;
+      }
 
       // Asegurarse de que no se copie el formulario actual
       if (currentForm.id && form.id === currentForm.id) return false;
@@ -552,6 +559,15 @@ export default function AdminPanel({
     const nextForm: EditingForm = {
       ...editingForm,
     };
+
+    if (editingForm.form_type === 'payment') {
+      nextForm.payment_prefill_entries = parsePaymentPrefillEntries(sourceForm.payment_prefill_entries);
+
+      setEditingForm(nextForm);
+      setCopySourceSelectorOpen(false);
+      setFormModalError(null);
+      return;
+    }
 
     if (editingForm.access_type === 'public') {
       nextForm.prefill_parent_email_entry = sourceForm.prefill_parent_email_entry ?? '';
@@ -672,6 +688,32 @@ export default function AdminPanel({
       if (editingForm.payment_activities.length === 0) {
         setFormModalError('Marca al menos una actividad que se pague con este formulario.');
         return;
+      }
+
+      // Los dos identificadores de cada actividad marcada son obligatorios; los
+      // de las demás son opcionales (sirven para marcar 0 en su fila).
+      for (const activity of PAYMENT_ACTIVITIES) {
+        const activityEntries = editingForm.payment_prefill_entries[activity.key];
+        const required = editingForm.payment_activities.includes(activity.key);
+
+        for (const [value, question] of [
+          [activityEntries?.names ?? '', 'nombres'],
+          [activityEntries?.grid ?? '', 'fila de la cuadrícula'],
+        ] as const) {
+          if (required && !value.trim()) {
+            setFormModalError(
+              `El identificador de Google Forms de "${activity.label}" (${question}) es obligatorio porque la actividad está marcada.`
+            );
+            return;
+          }
+
+          if (!isValidGoogleEntryKey(value)) {
+            setFormModalError(
+              `El identificador de Google Forms de "${activity.label}" (${question}) no es válido. Debe tener formato entry.123456789.`
+            );
+            return;
+          }
+        }
       }
 
       for (const activity of PAYMENT_ACTIVITIES) {
@@ -1055,6 +1097,15 @@ export default function AdminPanel({
         )
         : [],
       payment_activity_prices: paymentActivityPrices,
+      payment_prefill_entries: isPaymentForm
+        ? Object.fromEntries(
+          PAYMENT_ACTIVITIES.flatMap((activity) => {
+            const names = editingForm.payment_prefill_entries[activity.key]?.names.trim() ?? '';
+            const grid = editingForm.payment_prefill_entries[activity.key]?.grid.trim() ?? '';
+            return names || grid ? [[activity.key, { names, grid }]] : [];
+          })
+        )
+        : {},
       ...paymentDiscounts,
     };
 
@@ -1385,7 +1436,12 @@ export default function AdminPanel({
     ) ||
     (
       editingForm.form_type === 'payment'
-        ? editingForm.payment_activities.length === 0
+        ? editingForm.payment_activities.length === 0 ||
+        editingForm.payment_activities.some(
+          (key) =>
+            !editingForm.payment_prefill_entries[key]?.names.trim() ||
+            !editingForm.payment_prefill_entries[key]?.grid.trim()
+        )
         : (
           (
             editingForm.access_type === 'public' &&
@@ -2032,9 +2088,9 @@ export default function AdminPanel({
                     <p className="mt-3 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-3">
                       Antes de abrir el formulario se pedirán los participantes de cada actividad
                       marcada más abajo, y con ellos se rellenarán las preguntas de nombres y la tabla
-                      "INDIQUE LAS ACTIVIDADES PAGADAS". Los identificadores de esas preguntas son
-                      fijos: el formulario de Google tiene que ser el formulario de pago (o una copia
-                      suya). No lleva seguimiento de respuestas.
+                      "INDIQUE LAS ACTIVIDADES PAGADAS". Los identificadores de esas preguntas se
+                      configuran más abajo o se copian desde la plantilla de pago. No lleva
+                      seguimiento de respuestas.
                     </p>
                   )}
                 </div>
@@ -2092,31 +2148,31 @@ export default function AdminPanel({
                 </div>
 
                 {editingForm.form_type === 'registration' && (
-                <div className="md:col-span-2">
-                  <label className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={editingForm.google_form_watch_enabled}
-                      onChange={(e) => {
-                        setCopySourceSelectorOpen(false);
-                        setEditingForm({
-                          ...editingForm,
-                          google_form_watch_enabled: e.target.checked,
-                        });
-                      }}
-                      className="mt-1 w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <div>
-                      <div className="font-bold text-sm text-slate-700">
-                        Activar seguimiento automático de respuestas
+                  <div className="md:col-span-2">
+                    <label className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editingForm.google_form_watch_enabled}
+                        onChange={(e) => {
+                          setCopySourceSelectorOpen(false);
+                          setEditingForm({
+                            ...editingForm,
+                            google_form_watch_enabled: e.target.checked,
+                          });
+                        }}
+                        className="mt-1 w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <div>
+                        <div className="font-bold text-sm text-slate-700">
+                          Activar seguimiento automático de respuestas
+                        </div>
+                        <div className="text-sm text-slate-500">
+                          Si está activado, este formulario quedará incluido en la sincronización de watches de Google Forms y se revisará de forma automática que los datos introducidos por los usuarios son correctos,
+                          además de comprobarse también que ningún usuario externo envía el formulario.
+                        </div>
                       </div>
-                      <div className="text-sm text-slate-500">
-                        Si está activado, este formulario quedará incluido en la sincronización de watches de Google Forms y se revisará de forma automática que los datos introducidos por los usuarios son correctos,
-                        además de comprobarse también que ningún usuario externo envía el formulario.
-                      </div>
-                    </div>
-                  </label>
-                </div>
+                    </label>
+                  </div>
                 )}
                 {editingForm.google_form_watch_enabled && (
                   <div className="md:col-span-2">
@@ -2316,7 +2372,7 @@ export default function AdminPanel({
                   />
                 </div>
 
-                {editingForm.form_type === 'registration' && (
+                {editingForm && (
                   <div className="md:col-span-2">
                     <div className="bg-green-50 border border-green-200 rounded-2xl p-4">
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -2325,10 +2381,12 @@ export default function AdminPanel({
                             Reutilizar identificadores desde otro formulario
                           </div>
                           <div className="text-sm text-green-600">
-                            Solo se muestran plantillas de formularios del mismo tipo de acceso
-                            {editingForm.google_form_watch_enabled
-                              ? ' y con seguimiento automático activado'
-                              : ''}.
+                            {editingForm.form_type === 'payment'
+                              ? 'Solo se muestran plantillas de formularios de pago.'
+                              : `Solo se muestran plantillas de formularios del mismo tipo de acceso${editingForm.google_form_watch_enabled
+                                ? ' y con seguimiento automático activado'
+                                : ''
+                              }.`}
                           </div>
                         </div>
 
@@ -2534,6 +2592,82 @@ export default function AdminPanel({
                         </div>
                       </div>
                     )}
+                  </div>
+                )}
+
+                {editingForm.form_type === 'payment' && (
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-bold text-slate-700 mb-4">
+                      Campos de prerrelleno del formulario de pago
+                    </label>
+                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-4">
+                      <p className="text-sm text-amber-800">
+                        Introduce los identificadores <span className="font-mono font-bold">entry.XXXXXXXXX</span> de
+                        las dos preguntas de cada actividad: la de los <span className="font-semibold">nombres</span> de
+                        los participantes y su <span className="font-semibold">fila</span> en la cuadrícula
+                        "INDIQUE LAS ACTIVIDADES PAGADAS". Son obligatorios en las actividades marcadas; en las
+                        demás sirven para marcar 0 en su fila.
+                      </p>
+                    </div>
+
+                    <div className="space-y-3">
+                      {PAYMENT_ACTIVITIES.map((activity) => {
+                        const required = editingForm.payment_activities.includes(activity.key);
+                        const activityEntries = editingForm.payment_prefill_entries[activity.key] ?? {
+                          names: '',
+                          grid: '',
+                        };
+
+                        const setEntry = (question: 'names' | 'grid', value: string) =>
+                          setEditingForm({
+                            ...editingForm,
+                            payment_prefill_entries: {
+                              ...editingForm.payment_prefill_entries,
+                              [activity.key]: { ...activityEntries, [question]: value },
+                            },
+                          });
+
+                        return (
+                          <div
+                            key={activity.key}
+                            className={`rounded-xl border p-3 ${required ? 'border-emerald-200 bg-emerald-50/50' : 'border-slate-200'}`}
+                          >
+                            <p className="text-sm font-bold text-slate-700 mb-2">
+                              {activity.label}{' '}
+                              <span className="font-normal text-slate-400">
+                                {required ? '(obligatorio)' : '(opcional)'}
+                              </span>
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                                  Nombres de los participantes
+                                </label>
+                                <input
+                                  type="text"
+                                  value={activityEntries.names}
+                                  onChange={(e) => setEntry('names', e.target.value)}
+                                  placeholder="entry.123456789"
+                                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono text-sm"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                                  Fila "{activity.gridRowLabel}" de la cuadrícula
+                                </label>
+                                <input
+                                  type="text"
+                                  value={activityEntries.grid}
+                                  onChange={(e) => setEntry('grid', e.target.value)}
+                                  placeholder="entry.123456789"
+                                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all font-mono text-sm"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
 
