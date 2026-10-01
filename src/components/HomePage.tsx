@@ -171,7 +171,7 @@ export default function HomePage() {
       if (result.status === 'verification_required') {
         setPublicFormEmailInfo(
           result.message ??
-            'Te hemos enviado un correo de verificación. Revisa tu bandeja de entrada.'
+          'Te hemos enviado un correo de verificación. Revisa tu bandeja de entrada.'
         );
         setSubmittingPublicFormEmail(false);
         return;
@@ -297,7 +297,7 @@ export default function HomePage() {
         setAccessVerified(false);
         setInfoMessage(
           result.message ??
-            'Te hemos enviado un correo de verificación. Revisa tu bandeja de entrada.'
+          'Te hemos enviado un correo de verificación. Revisa tu bandeja de entrada.'
         );
         setCheckingAccess(false);
         return;
@@ -385,7 +385,7 @@ export default function HomePage() {
             className="inline-flex items-center justify-center gap-2 text-emerald-700 font-bold hover:text-emerald-800 underline-offset-4 hover:underline"
           >
             <Calculator className="w-5 h-5 flex-shrink-0" />
-            Calcula cuánto tienes que pagar
+            Calculadora de pagos
           </Link>
         </motion.div>
       </div>

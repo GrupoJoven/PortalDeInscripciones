@@ -162,8 +162,12 @@ export default function PaymentCalculatorPage() {
           Calculadora de pagos
         </motion.h1>
         <p className="text-slate-600 max-w-xl mx-auto">
-          Indica cuántos de tus hijos participan en cada actividad y te diremos cuánto tienes que
+          Indica cuántos de tus hijos participan en cada actividad que requiera un pago (acampadas, campamento, camino, etc.) y te diremos cuánto tienes que
           pagar, con los descuentos por hermanos ya aplicados.
+        </p>
+        <p className="text-slate-600 max-w-xl mx-auto">
+          Participar en las catequesis durante el año no tiene coste alguno, pero las otras actividades al requerir la contratación de autobuses, comida, alojamiento,
+          etc. Tienen un coste de participación asociado.
         </p>
       </div>
 
