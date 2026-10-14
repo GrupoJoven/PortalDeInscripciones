@@ -97,8 +97,8 @@ export default function FormCard({ form, onAccessClick }: FormCardProps) {
           )}
         </div>
 
-        {isOpen && (
-          <div className="space-y-3">
+        <div className="space-y-3">
+          {isOpen ? (
             <button
               type="button"
               onClick={handleClick}
@@ -107,40 +107,40 @@ export default function FormCard({ form, onAccessClick }: FormCardProps) {
               Acceder al Formulario
               <ExternalLink className="w-4 h-4" />
             </button>
+          ) : (
+            <div className="text-sm text-slate-500 font-medium">
+              Disponible próximamente
+            </div>
+          )}
 
-            {(form.circular_url || form.authorization_url) && (
-              <div className="grid grid-cols-1 gap-3">
-                {form.circular_url && (
-                  <button
-                    type="button"
-                    onClick={handleCircularClick}
-                    className="w-full bg-slate-100 text-slate-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200 transition-all"
-                  >
-                    Acceder a circular
-                    <FileText className="w-4 h-4" />
-                  </button>
-                )}
+          {/* La circular y la autorización se pueden consultar aunque el
+              formulario aún no haya abierto. */}
+          {(form.circular_url || form.authorization_url) && (
+            <div className="grid grid-cols-1 gap-3">
+              {form.circular_url && (
+                <button
+                  type="button"
+                  onClick={handleCircularClick}
+                  className="w-full bg-slate-100 text-slate-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200 transition-all"
+                >
+                  Acceder a circular
+                  <FileText className="w-4 h-4" />
+                </button>
+              )}
 
-                {form.authorization_url && (
-                  <button
-                    type="button"
-                    onClick={handleAuthorizationClick}
-                    className="w-full bg-slate-100 text-slate-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200 transition-all"
-                  >
-                    Acceder a autorización
-                    <ShieldCheck className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {!isOpen && (
-          <div className="text-sm text-slate-500 font-medium">
-            Disponible próximamente
-          </div>
-        )}
+              {form.authorization_url && (
+                <button
+                  type="button"
+                  onClick={handleAuthorizationClick}
+                  className="w-full bg-slate-100 text-slate-700 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200 transition-all"
+                >
+                  Acceder a autorización
+                  <ShieldCheck className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {alreadyAnswered && (

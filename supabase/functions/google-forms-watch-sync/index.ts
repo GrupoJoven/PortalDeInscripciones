@@ -139,10 +139,39 @@ async function createGoogleFormsWatch(params: {
 
   if (!resp.ok) {
     const text = await resp.text()
+
+    // Google ya tiene un watch de este proyecto para el formulario, aunque no
+    // esté en google_form_watches. Devuelve null para que se adopte.
+    if (resp.status === 400 && text.includes('already exists')) {
+      return null
+    }
+
     throw new Error(`Error creando watch para ${params.googleFormId}: ${resp.status} ${text}`)
   }
 
   return await resp.json()
+}
+
+async function listGoogleFormsWatches(params: {
+  accessToken: string
+  googleFormId: string
+}) {
+  const resp = await fetch(
+    `${GOOGLE_FORMS_API_BASE}/forms/${encodeURIComponent(params.googleFormId)}/watches`,
+    {
+      headers: {
+        Authorization: `Bearer ${params.accessToken}`,
+      },
+    }
+  )
+
+  if (!resp.ok) {
+    const text = await resp.text()
+    throw new Error(`Error listando watches de ${params.googleFormId}: ${resp.status} ${text}`)
+  }
+
+  const json = await resp.json()
+  return (json.watches ?? []) as Array<{ id: string; eventType?: string; expireTime?: string }>
 }
 
 /**
@@ -412,11 +441,39 @@ Deno.serve(async (req) => {
           }
         }
 
-        const watchResponse = await createGoogleFormsWatch({
+        let watchResponse = await createGoogleFormsWatch({
           accessToken: refreshed.accessToken,
           googleFormId: form.google_form_id.trim(),
           topicName: GOOGLE_FORMS_WATCH_TOPIC,
         })
+
+        // Watch huérfano: existe en Google pero no en la tabla (se creó y
+        // falló el insert, o pertenecía a un registro ya borrado). Mientras
+        // viva Google no deja crear otro, así que se adopta renovándolo.
+        if (!watchResponse) {
+          const orphanWatch = (
+            await listGoogleFormsWatches({
+              accessToken: refreshed.accessToken,
+              googleFormId: form.google_form_id.trim(),
+            })
+          ).find((watch) => watch.eventType === 'RESPONSES')
+
+          if (!orphanWatch) {
+            throw new Error(
+              `Google dice que ya existe un watch para ${form.google_form_id} pero no aparece al listarlos.`
+            )
+          }
+
+          watchResponse = await renewGoogleFormsWatch({
+            accessToken: refreshed.accessToken,
+            googleFormId: form.google_form_id.trim(),
+            watchId: orphanWatch.id,
+          })
+
+          if (!watchResponse) {
+            throw new Error(`No se pudo renovar el watch huérfano ${orphanWatch.id} de ${form.google_form_id}`)
+          }
+        }
 
         await markExistingWatchesAsReplaced(supabase, form.id)
 

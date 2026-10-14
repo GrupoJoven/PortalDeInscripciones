@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { AlertCircle, Calculator, Minus, Plus, Receipt } from 'lucide-react';
+import { AlertCircle, Calculator, Clock, Minus, Plus, Receipt } from 'lucide-react';
+import { format, parseISO } from 'date-fns';
+import { es } from 'date-fns/locale';
 
 import { supabase } from '../lib/supabaseClient';
 import { isFormCurrentlyOpen } from '../types';
@@ -21,6 +23,8 @@ type CalculatorActivity = PaymentActivity & { price: number };
 type CalculatorForm = {
   id: string;
   title: string;
+  // Fecha de apertura si el pago aún no ha abierto; null si ya está abierto.
+  upcomingOpenDate: string | null;
   discounts: SiblingDiscounts;
   activities: CalculatorActivity[];
 };
@@ -33,17 +37,23 @@ const toNumberOrNull = (value: unknown) => {
   return Number.isFinite(number) ? number : null;
 };
 
+const isFormUpcoming = (row: { open_date: string | null }) =>
+  !!row.open_date && new Date(row.open_date).getTime() > Date.now();
+
 /**
- * Formularios de pago públicos abiertos ahora mismo, del más reciente al más
- * antiguo, solo con las actividades que tienen precio. Si una actividad está
- * en varios formularios abiertos, se queda en el más reciente.
+ * Formularios de pago públicos abiertos ahora mismo y, después, los que
+ * abrirán próximamente; dentro de cada grupo, del más reciente al más antiguo.
+ * Solo con las actividades que tienen precio. Si una actividad está en varios
+ * formularios, se queda en el primero (los abiertos tienen prioridad).
  */
 const buildCalculatorForms = (rows: any[]): CalculatorForm[] => {
   const usedKeys = new Set<PaymentActivityKey>();
   const forms: CalculatorForm[] = [];
 
-  for (const row of rows) {
-    if (!isFormCurrentlyOpen(row)) continue;
+  const openRows = rows.filter((row) => isFormCurrentlyOpen(row));
+  const upcomingRows = rows.filter((row) => isFormUpcoming(row));
+
+  for (const row of [...openRows, ...upcomingRows]) {
 
     const enabledKeys: PaymentActivityKey[] = (row.payment_activities ?? []).filter(
       isPaymentActivityKey,
@@ -66,6 +76,7 @@ const buildCalculatorForms = (rows: any[]): CalculatorForm[] => {
     forms.push({
       id: row.id,
       title: row.title,
+      upcomingOpenDate: isFormUpcoming(row) ? row.open_date : null,
       discounts: {
         pair: toNumberOrNull(row.payment_sibling_discount_pair),
         trio: toNumberOrNull(row.payment_sibling_discount_trio),
@@ -185,7 +196,7 @@ export default function PaymentCalculatorPage() {
         <div className="text-center py-16 bg-slate-50 rounded-3xl border-2 border-dashed border-slate-200">
           <AlertCircle className="w-8 h-8 text-slate-300 mx-auto mb-3" />
           <p className="text-slate-500 font-medium">
-            Ahora mismo no hay ningún pago abierto con precios publicados.
+            Ahora mismo no hay ningún pago abierto ni próximo con precios publicados.
           </p>
         </div>
       ) : (
@@ -206,6 +217,13 @@ export default function PaymentCalculatorPage() {
                     <Receipt className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-1" />
                     <div className="min-w-0">
                       <h2 className="text-xl font-bold text-slate-900 break-words">{form.title}</h2>
+                      {form.upcomingOpenDate && (
+                        <p className="inline-flex items-center gap-1.5 mt-2 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-full px-2.5 py-1">
+                          <Clock className="w-3.5 h-3.5" />
+                          Próximamente: el pago abre el{' '}
+                          {format(parseISO(form.upcomingOpenDate), 'PPP p', { locale: es })}
+                        </p>
+                      )}
                       {summary && (
                         <p className="text-sm text-slate-500 mt-1">
                           Descuento por hermanos en este pago: {summary}
