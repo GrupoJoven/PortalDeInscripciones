@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { sendGmailEmail } from "../_shared/gmail.ts";
+import { buildPublicIdEmail } from "../_shared/publicIdEmail.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -276,12 +277,7 @@ async function sendReminderEmail({
   appBaseUrl: string;
   recipient: Recipient;
 }): Promise<boolean> {
-  const subject =
-    recipient.children.length === 1
-      ? "Identificador de acceso al portal de inscripciones"
-      : "Identificadores de acceso al portal de inscripciones";
-
-  const html = buildReminderHtml(recipient, appBaseUrl);
+  const { subject, html } = buildPublicIdEmail(recipient.children, appBaseUrl);
 
   // Un reintento: un fallo puntual dejaría a esa familia sin sus identificadores.
   let waitBeforeNextAttemptMs = 1000;
@@ -311,77 +307,8 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function buildReminderHtml(recipient: Recipient, appBaseUrl: string) {
-  const isSingle = recipient.children.length === 1;
-
-  const rows = recipient.children
-    .map(
-      (child) => `
-        <tr>
-          <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;">${escapeHtml(child.name)}</td>
-          <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;">${escapeHtml(child.group_name)}</td>
-          <td style="padding:10px 14px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-weight:bold;color:#4338ca;">${escapeHtml(
-            child.public_id
-          )}</td>
-        </tr>`
-    )
-    .join("");
-
-  const portalUrl = appBaseUrl ? appBaseUrl.replace(/\/$/, "") : "";
-
-  const portalBlock = portalUrl
-    ? `
-        <p>
-          <a href="${portalUrl}" style="display:inline-block;padding:12px 18px;background:#4f46e5;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:bold;">
-            Ir al portal de inscripciones
-          </a>
-        </p>
-        <p>Si el botón no funciona, copia y pega este enlace en tu navegador:</p>
-        <p>${portalUrl}</p>`
-    : "";
-
-  return `
-    <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #111827;">
-      <h2>${isSingle ? "Identificador de acceso" : "Identificadores de acceso"}</h2>
-      <p>Hola,</p>
-      <p>
-        Te recordamos ${isSingle ? "el identificador" : "los identificadores"} de acceso al portal de
-        inscripciones ${isSingle ? "de tu hijo/a" : "de tus hijos/as"}:
-      </p>
-      <table style="border-collapse:collapse;margin:16px 0;">
-        <thead>
-          <tr>
-            <th style="text-align:left;padding:10px 14px;border-bottom:2px solid #cbd5e1;">Nombre</th>
-            <th style="text-align:left;padding:10px 14px;border-bottom:2px solid #cbd5e1;">Grupo</th>
-            <th style="text-align:left;padding:10px 14px;border-bottom:2px solid #cbd5e1;">Identificador</th>
-          </tr>
-        </thead>
-        <tbody>${rows}
-        </tbody>
-      </table>
-      <p>
-        Introduce ${isSingle ? "este identificador" : "el identificador correspondiente"} en el portal
-        para ver los formularios disponibles.
-      </p>
-      ${portalBlock}
-      <p style="margin-top:24px;color:#6b7280;font-size:13px;">
-        NOTA: no respondas a este correo electrónico, ha sido enviado de manera automática.
-      </p>
-    </div>
-  `;
-}
-
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-function escapeHtml(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
 }
 
 function jsonResponse(body: unknown, status = 200) {

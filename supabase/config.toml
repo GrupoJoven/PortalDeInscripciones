@@ -589,3 +589,9 @@ enabled = true
 verify_jwt = false
 import_map = "./functions/payment-form-access/deno.json"
 entrypoint = "./functions/payment-form-access/index.ts"
+
+[functions.recover-public-ids]
+enabled = true
+verify_jwt = false
+import_map = "./functions/recover-public-ids/deno.json"
+entrypoint = "./functions/recover-public-ids/index.ts"

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { X, Mail, Lock, AlertCircle, ShieldCheck, UserRound, Globe, BookOpen, Calculator } from 'lucide-react';
@@ -8,6 +8,8 @@ import { isFormCurrentlyOpen } from '../types';
 import FormsSection from './FormsSection';
 import DniVerificationGate from './DniVerificationGate';
 import PaymentFormGate from './PaymentFormGate';
+import PublicIdRecoveryModal from './PublicIdRecoveryModal';
+import PublicFormAudienceCheck from './PublicFormAudienceCheck';
 
 import type {
   PublicHomeForm,
@@ -49,6 +51,16 @@ export default function HomePage() {
     accessPublicId?: string;
   } | null>(null);
 
+  // Pregunta previa de los formularios públicos de inscripción
+  const [audienceCheckForm, setAudienceCheckForm] = useState<PublicHomeForm | null>(null);
+  const [showPublicIdRecovery, setShowPublicIdRecovery] = useState(false);
+  const publicIdInputRef = useRef<HTMLInputElement>(null);
+
+  const focusPublicIdInput = () => {
+    publicIdInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    publicIdInputRef.current?.focus({ preventScroll: true });
+  };
+
   const openPublicFormAccessModal = (form: PublicHomeForm) => {
     setSelectedPublicForm(form);
     setPublicFormEmail('');
@@ -57,14 +69,24 @@ export default function HomePage() {
   };
 
   /**
-   * Los formularios con verificación de DNI pasan primero por el aviso y el
-   * QR; el resto van directamente al paso del correo electrónico.
+   * Los de pago van a su paso previo. Los de inscripción preguntan antes si
+   * el alumno ya está en un grupo (en ese caso tiene que usar su código).
    */
   const handleFormAccessClick = useCallback((form: PublicHomeForm) => {
     if (form.form_type === 'payment') {
       setPaymentGate({ form });
       return;
     }
+
+    setAudienceCheckForm(form);
+  }, []);
+
+  /**
+   * Los formularios con verificación de DNI pasan primero por el aviso y el
+   * QR; el resto van directamente al paso del correo electrónico.
+   */
+  const startPublicFormAccess = useCallback((form: PublicHomeForm) => {
+    setAudienceCheckForm(null);
 
     if (form.dni_verification_enabled) {
       setDniSessionToken('');
@@ -405,6 +427,7 @@ export default function HomePage() {
           </div>
 
           <input
+            ref={publicIdInputRef}
             type="text"
             value={publicId}
             onChange={(e) => setPublicId(e.target.value.toUpperCase())}
@@ -420,6 +443,16 @@ export default function HomePage() {
             {checkingAccess ? 'Verificando...' : 'Verificar'}
           </button>
         </form>
+
+        <div className="mt-3 text-center">
+          <button
+            type="button"
+            onClick={() => setShowPublicIdRecovery(true)}
+            className="text-sm font-semibold text-indigo-600 hover:text-indigo-700 underline-offset-4 hover:underline"
+          >
+            ¿No sabes el código de tu hijo/a?
+          </button>
+        </div>
 
         {error && (
           <motion.div
@@ -569,6 +602,26 @@ export default function HomePage() {
           onCancel={() => setDniGateForm(null)}
           onVerified={handleDniVerified}
         />
+      )}
+
+      {audienceCheckForm && (
+        <PublicFormAudienceCheck
+          form={audienceCheckForm}
+          onCancel={() => setAudienceCheckForm(null)}
+          onContinue={startPublicFormAccess}
+          onEnterCode={() => {
+            setAudienceCheckForm(null);
+            focusPublicIdInput();
+          }}
+          onForgotCode={() => {
+            setAudienceCheckForm(null);
+            setShowPublicIdRecovery(true);
+          }}
+        />
+      )}
+
+      {showPublicIdRecovery && (
+        <PublicIdRecoveryModal onClose={() => setShowPublicIdRecovery(false)} />
       )}
     </div>
   );
