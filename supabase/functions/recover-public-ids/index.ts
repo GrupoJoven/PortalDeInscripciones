@@ -21,7 +21,7 @@ const RATE_LIMIT_MS = 10 * 60 * 1000;
 const REQUEST_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 const GENERIC_MESSAGE =
-  "Si ese correo es el email de contacto de algún alumno, te acabamos de enviar sus identificadores. " +
+  "Si ese correo es el email de contacto de algún catecúmeno, te acabamos de enviar sus identificadores. " +
   "Revisa tu bandeja de entrada y la carpeta de spam. Si en unos minutos no te ha llegado, " +
   "prueba con otro correo que nos hayas podido dar.";
 

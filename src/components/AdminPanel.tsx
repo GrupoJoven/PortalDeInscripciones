@@ -203,14 +203,14 @@ export default function AdminPanel({
 
     if (studentsError) {
       console.error(studentsError);
-      setError('Error al cargar los alumnos.');
+      setError('Error al cargar los catecúmenos.');
       setLoadingAccess(false);
       return;
     }
 
     if (groupsError) {
       console.error(groupsError);
-      setError('Error al cargar los grupos de los alumnos.');
+      setError('Error al cargar los grupos de los catecúmenos.');
       setLoadingAccess(false);
       return;
     }
@@ -1273,7 +1273,7 @@ export default function AdminPanel({
   };
 
   const regeneratePublicId = async (studentId: string) => {
-    const confirmed = confirm('¿Seguro que quieres regenerar el identificador público de este alumno? El código anterior dejará de servir.');
+    const confirmed = confirm('¿Seguro que quieres regenerar el identificador público de este catecúmeno? El código anterior dejará de servir.');
     if (!confirmed) return;
 
     setRegeneratingStudentId(studentId);
@@ -1790,7 +1790,7 @@ export default function AdminPanel({
                   ` (${remindersResult.retried} reintentados automáticamente con éxito)`}
                 {remindersResult.failed > 0 && ` · Fallidos definitivamente: ${remindersResult.failed}`}
                 {remindersResult.skippedStudents > 0 &&
-                  ` · Alumnos omitidos (sin identificador o sin email válido): ${remindersResult.skippedStudents}`}
+                  ` · Catecúmenos omitidos (sin identificador o sin email válido): ${remindersResult.skippedStudents}`}
               </p>
             </div>
           )}
@@ -1840,7 +1840,7 @@ export default function AdminPanel({
             </div>
           ) : filteredAccessRows.length === 0 ? (
             <div className="bg-white border border-slate-200 rounded-3xl p-10 text-center">
-              <p className="text-slate-500">No se han encontrado alumnos con ese criterio.</p>
+              <p className="text-slate-500">No se han encontrado catecúmenos con ese criterio.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4">
@@ -1938,11 +1938,11 @@ export default function AdminPanel({
                   {remindersSummary.recipients}
                 </p>
                 <p>
-                  <span className="font-bold text-slate-700">Alumnos incluidos:</span>{' '}
+                  <span className="font-bold text-slate-700">Catecúmenos incluidos:</span>{' '}
                   {remindersSummary.includedStudents}
                 </p>
                 <p>
-                  <span className="font-bold text-slate-700">Alumnos omitidos:</span>{' '}
+                  <span className="font-bold text-slate-700">Catecúmenos omitidos:</span>{' '}
                   {remindersSummary.skipped.length} (sin identificador o sin email válido)
                 </p>
               </div>
@@ -1951,7 +1951,7 @@ export default function AdminPanel({
                 <div className="border border-slate-200 rounded-2xl overflow-hidden">
                   <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
                     <p className="text-sm font-bold text-slate-700">
-                      Alumnos que no recibirán identificador
+                      Catecúmenos que no recibirán identificador
                     </p>
                   </div>
 
@@ -2340,7 +2340,7 @@ export default function AdminPanel({
                       <div>
                         <div className="font-bold text-sm">ACCESO LIMITADO</div>
                         <div className="text-xs opacity-80">
-                          Solo lo verán los alumnos de los grupos seleccionados.
+                          Solo lo verán los catecúmenos de los grupos seleccionados.
                         </div>
                       </div>
                     </label>

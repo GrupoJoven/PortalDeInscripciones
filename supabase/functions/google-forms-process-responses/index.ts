@@ -931,7 +931,7 @@ Deno.serve(async (req) => {
             .single()
 
           if (studentError || !studentRow) {
-            throw new Error(`No se ha encontrado el alumno asociado al identificador ${publicId}.`)
+            throw new Error(`No se ha encontrado el catecúmeno asociado al identificador ${publicId}.`)
           }
 
           const { data: groupRow, error: groupError } = await supabase

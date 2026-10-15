@@ -105,7 +105,7 @@ Deno.serve(async (req) => {
           status: "verification_required",
           forms: [],
           message:
-            "El correo de contacto asociado a este alumno no es válido. Debes contactar con la parroquia para corregirlo.",
+            "El correo de contacto asociado a este catecúmeno no es válido. Debes contactar con la parroquia para corregirlo.",
         },
         200
       );

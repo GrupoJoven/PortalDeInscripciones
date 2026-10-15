@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { X, Mail, Lock, AlertCircle, ShieldCheck, UserRound, Globe, BookOpen, Calculator } from 'lucide-react';
+import { X, Mail, Lock, AlertCircle, ShieldCheck, UserRound, Globe, BookOpen, Calculator, MessageCircleQuestion } from 'lucide-react';
 
 import { supabase } from '../lib/supabaseClient';
 import { isFormCurrentlyOpen } from '../types';
@@ -10,6 +10,8 @@ import DniVerificationGate from './DniVerificationGate';
 import PaymentFormGate from './PaymentFormGate';
 import PublicIdRecoveryModal from './PublicIdRecoveryModal';
 import PublicFormAudienceCheck from './PublicFormAudienceCheck';
+import InscriptionAssistant from './assistant/InscriptionAssistant';
+import type { AssistantAction } from './assistant/assistantTree';
 
 import type {
   PublicHomeForm,
@@ -55,10 +57,33 @@ export default function HomePage() {
   const [audienceCheckForm, setAudienceCheckForm] = useState<PublicHomeForm | null>(null);
   const [showPublicIdRecovery, setShowPublicIdRecovery] = useState(false);
   const publicIdInputRef = useRef<HTMLInputElement>(null);
+  const publicFormsSectionRef = useRef<HTMLDivElement>(null);
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const navigate = useNavigate();
 
   const focusPublicIdInput = () => {
     publicIdInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     publicIdInputRef.current?.focus({ preventScroll: true });
+  };
+
+  const handleAssistantAction = (action: AssistantAction) => {
+    switch (action) {
+      case 'enter_code':
+        focusPublicIdInput();
+        break;
+      case 'recover_code':
+        setShowPublicIdRecovery(true);
+        break;
+      case 'public_forms':
+        publicFormsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        break;
+      case 'calculator':
+        navigate('/calculadora-pagos');
+        break;
+      case 'guide':
+        window.open(PORTAL_GUIDE_URL, '_blank', 'noopener,noreferrer');
+        break;
+    }
   };
 
   const openPublicFormAccessModal = (form: PublicHomeForm) => {
@@ -400,8 +425,16 @@ export default function HomePage() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.35 }}
-          className="mt-4"
+          className="mt-4 flex flex-wrap items-center justify-center gap-x-6 gap-y-2"
         >
+          <button
+            type="button"
+            onClick={() => setAssistantOpen(true)}
+            className="inline-flex items-center justify-center gap-2 text-indigo-700 font-bold hover:text-indigo-800 underline-offset-4 hover:underline"
+          >
+            <MessageCircleQuestion className="w-5 h-5 flex-shrink-0" />
+            Te ayudamos paso a paso
+          </button>
           <Link
             to="/calculadora-pagos"
             className="inline-flex items-center justify-center gap-2 text-emerald-700 font-bold hover:text-emerald-800 underline-offset-4 hover:underline"
@@ -489,6 +522,7 @@ export default function HomePage() {
           />
         )}
 
+        <div ref={publicFormsSectionRef} className="scroll-mt-28">
         <FormsSection
           title="Formularios públicos"
           description="Formularios abiertos a todo el mundo. No necesitas identificador para acceder."
@@ -499,6 +533,7 @@ export default function HomePage() {
           loading={loadingPublic}
           onAccessClick={handleFormAccessClick}
         />
+        </div>
       </div>
 
       {selectedPublicForm && (
@@ -623,6 +658,12 @@ export default function HomePage() {
       {showPublicIdRecovery && (
         <PublicIdRecoveryModal onClose={() => setShowPublicIdRecovery(false)} />
       )}
+
+      <InscriptionAssistant
+        open={assistantOpen}
+        onOpenChange={setAssistantOpen}
+        onAction={handleAssistantAction}
+      />
     </div>
   );
 }
