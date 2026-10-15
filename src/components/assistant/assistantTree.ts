@@ -69,15 +69,18 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
       '¿Tu hijo/a ya está en un grupo de Preconfirmación o Confirmación del Grupo Joven este curso?',
     ],
     options: [
-      { label: 'Sí, ya está en un grupo', next: 'tiene_grupo' },
-      { label: 'No, es nuevo/a', next: 'nuevo' },
+      {
+        label: 'Sí, ya está en un grupo de Preconfirmación o Confirmación del Grupo Joven.',
+        next: 'tiene_grupo',
+      },
+      { label: 'No, es nuevo/a o pertenece a comunión/postcomunión.', next: 'nuevo' },
     ],
   },
 
   tiene_grupo: {
     message: [
       'Entonces su formulario está en «Tus formularios», y se entra con su código, que empieza por SANP-.',
-      'No uses los formularios públicos: son para quienes todavía no están en un grupo.',
+      'No uses los formularios públicos: son para quienes son nuevos o están en comunión/postcomunión.',
       '¿Tienes su código?',
     ],
     options: [
@@ -119,7 +122,7 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
     message: ['Entonces tienes que usar los «Formularios públicos». Estos son los pasos:'],
     steps: [
       'Baja hasta «Formularios públicos» (no escribas nada en el recuadro del código), busca la actividad y pulsa «Acceder al Formulario».',
-      'Te preguntaremos si ya está en un grupo: responde «No, es nuevo/a».',
+      'Te preguntaremos si ya está en un grupo: responde «No, es nuevo/a o pertenece a comunión/postcomunión».',
       'Si pone «Requiere verificar el DNI con el móvil», ten a mano el DNI del participante (si es menor de 14 años y no tiene DNI, el de su padre, madre o tutor). Escanea el código QR con el móvil, o pulsa «Abre la verificación en este mismo dispositivo» si ya estás en el móvil, y fotografía el DNI por delante y por detrás.',
       'Escribe el correo que quieres usar como email de contacto: es el que usaremos para comunicarnos contigo y aparecerá ya puesto en el formulario.',
       'Si es la primera vez, te llegará un correo de no-reply@sanpas.es. Pulsa «Verificar correo» y después vuelve a la pestaña del portal y pulsa «Continuar».',

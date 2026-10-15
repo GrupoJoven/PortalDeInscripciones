@@ -63,16 +63,16 @@ export default function PublicFormAudienceCheck({
               <button
                 type="button"
                 onClick={() => setIsMember(true)}
-                className="w-full bg-slate-100 text-slate-800 py-3 rounded-xl font-bold hover:bg-slate-200 transition-colors"
+                className="w-full bg-slate-100 text-slate-800 px-4 py-3 rounded-xl font-bold hover:bg-slate-200 transition-colors"
               >
-                Sí, ya está en un grupo
+                Sí, ya está en un grupo de Preconfirmación o Confirmación del Grupo Joven.
               </button>
               <button
                 type="button"
                 onClick={() => onContinue(form)}
-                className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold hover:bg-indigo-700 transition-colors"
+                className="w-full bg-indigo-600 text-white px-4 py-3 rounded-xl font-bold hover:bg-indigo-700 transition-colors"
               >
-                No, es nuevo/a
+                No, es nuevo/a o pertenece a comunión/postcomunión.
               </button>
             </div>
           </>
