@@ -135,11 +135,14 @@ export default function InscriptionAssistant({
                         </ol>
                       )}
 
-                      {node.note && (
-                        <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
-                          {node.note}
+                      {node.notes?.map((note) => (
+                        <p
+                          key={note}
+                          className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2"
+                        >
+                          {note}
                         </p>
-                      )}
+                      ))}
                     </div>
 
                     {isCurrent && (node.actions || node.options) && (

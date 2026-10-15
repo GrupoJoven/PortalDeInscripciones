@@ -33,13 +33,21 @@ export type AssistantNodeId =
 export type AssistantNode = {
   message: string[];
   steps?: string[];
-  note?: string;
+  notes?: string[];
   options?: { label: string; next: AssistantNodeId }[];
   actions?: { label: string; action: AssistantAction }[];
 };
 
 const PROXIMAMENTE_NOTE =
   'Si la actividad aparece en «Próximamente», todavía no ha abierto, pero ya puedes leer su circular y su autorización.';
+
+// El formulario de Google siempre pide primero un correo: no es el email de
+// contacto, solo donde llega el resguardo (así lo explica la guía).
+const RECEIPT_EMAIL_STEP =
+  'Lo primero que te pedirá el formulario es un correo electrónico: es solo donde Google te enviará el resguardo de tus respuestas. No tiene por qué ser el email de contacto.';
+
+const SEND_AND_CHECK_STEP =
+  'Pulsa «Enviar» y comprueba que aparece la pantalla de confirmación. Después, mira que te llega el resguardo a ese correo: si no te llega, es que no lo hemos recibido.';
 
 export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
   start: {
@@ -82,12 +90,17 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
     message: ['Perfecto. Estos son los pasos:'],
     steps: [
       'Escribe el código en el recuadro de la portada y pulsa «Verificar».',
-      'La primera vez te enviaremos un correo de verificación al email de contacto que nos diste. Ábrelo y pulsa el enlace (si no lo ves, mira en spam).',
-      'En «Tus formularios», pulsa «Acceder al Formulario» en la actividad.',
-      'El formulario se abre con los datos de tu hijo/a ya rellenados. No cambies ninguno, ni siquiera el email: si cambias alguno, la inscripción se borra. Si algún dato está mal, avisa a sus catequistas.',
+      'La primera vez te llegará un correo de no-reply@sanpas.es al email de contacto que tenemos guardado. Pulsa «Verificar correo» y, en la página que se abre, «Continuar» (si no lo ves, mira en spam).',
+      'Se abrirá el portal con «Tus formularios». Pulsa «Acceder al Formulario» en la actividad.',
+      RECEIPT_EMAIL_STEP,
+      'Lee el aviso del formulario y rellena solo lo que falta. No cambies ningún dato de los que vienen rellenados, ni siquiera el email: si cambias alguno, la inscripción se borra.',
+      SEND_AND_CHECK_STEP,
       'Si tienes varios hijos, repite los pasos con el código de cada uno: cada hijo tiene el suyo.',
     ],
-    note: PROXIMAMENTE_NOTE,
+    notes: [
+      'Si algún dato rellenado está mal, no envíes el formulario: apunta qué está mal y avisa a su catequista, al coordinador del grupo o a grupojoven@sanpas.es. Cuando te confirmen que está corregido, vuelve a entrar desde el portal.',
+      PROXIMAMENTE_NOTE,
+    ],
     actions: [{ label: 'Escribir el código', action: 'enter_code' }],
   },
 
@@ -96,20 +109,28 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
       'No pasa nada: te lo enviamos ahora mismo.',
       'Escribe el email de contacto que nos diste al apuntarle y te llegarán los códigos de todos tus hijos.',
     ],
-    note: 'Si no te llega, puede que nos dieras otro correo: prueba con él. Si aun así no llega, habla con los catequistas de tu hijo/a.',
+    notes: [
+      'Si no te llega, puede que nos dieras otro correo: prueba con él. Si aun así no llega, pregunta a su catequista o al coordinador del grupo.',
+    ],
     actions: [{ label: 'Enviarme los códigos', action: 'recover_code' }],
   },
 
   nuevo: {
     message: ['Entonces tienes que usar los «Formularios públicos». Estos son los pasos:'],
     steps: [
-      'Baja hasta «Formularios públicos», busca la actividad y pulsa «Acceder al Formulario».',
+      'Baja hasta «Formularios públicos» (no escribas nada en el recuadro del código), busca la actividad y pulsa «Acceder al Formulario».',
       'Te preguntaremos si ya está en un grupo: responde «No, es nuevo/a».',
-      'Si el formulario pide verificar el DNI, ten a mano el DNI del participante y un móvil con cámara: escanearás un código QR y harás dos fotos del documento. Si es menor de 14 años y no tiene DNI, se usa el de su padre, madre o tutor.',
-      'Escribe tu correo electrónico. Si es la primera vez, te enviaremos un enlace para verificarlo: ábrelo (mira también en spam).',
-      'Rellena el formulario desde el enlace que te damos y envíalo. No cambies el email que viene puesto ni uses enlaces del formulario reenviados por WhatsApp: esas inscripciones se borran.',
+      'Si pone «Requiere verificar el DNI con el móvil», ten a mano el DNI del participante (si es menor de 14 años y no tiene DNI, el de su padre, madre o tutor). Escanea el código QR con el móvil, o pulsa «Abre la verificación en este mismo dispositivo» si ya estás en el móvil, y fotografía el DNI por delante y por detrás.',
+      'Escribe el correo que quieres usar como email de contacto: es el que usaremos para comunicarnos contigo y aparecerá ya puesto en el formulario.',
+      'Si es la primera vez, te llegará un correo de no-reply@sanpas.es. Pulsa «Verificar correo» y después vuelve a la pestaña del portal y pulsa «Continuar».',
+      RECEIPT_EMAIL_STEP,
+      'Rellena solo los datos que faltan, sin cambiar los que vienen puestos: si cambias alguno, la inscripción se borra.',
+      SEND_AND_CHECK_STEP,
     ],
-    note: PROXIMAMENTE_NOTE,
+    notes: [
+      'No uses enlaces del formulario que te hayan pasado otras personas: esas inscripciones se borran.',
+      PROXIMAMENTE_NOTE,
+    ],
     actions: [{ label: 'Ver los formularios públicos', action: 'public_forms' }],
   },
 
@@ -158,7 +179,9 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
       'Escribe tu correo y, si te llega un enlace de verificación, ábrelo.',
       'Rellena el formulario desde el enlace que te damos, sin cambiar el email que viene puesto.',
     ],
-    note: 'Si estás seguro de que sí lo verificaste, escribe a grupojoven@sanpas.es con una captura de la página de verificación.',
+    notes: [
+      'Si estás seguro de que sí lo verificaste, escribe a grupojoven@sanpas.es con una captura de la página de verificación. Aun así, tendrás que repetir la inscripción: la respuesta ya se ha borrado.',
+    ],
     options: [{ label: 'Mi hijo/a ya está en un grupo', next: 'tiene_grupo' }],
     actions: [{ label: 'Ver los formularios públicos', action: 'public_forms' }],
   },
@@ -172,7 +195,9 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
       'Vuelve a entrar con el código de tu hijo/a.',
       'Envía el formulario sin cambiar ningún dato rellenado, ni siquiera el email.',
     ],
-    note: 'Si algún dato está mal de verdad, avisa a sus catequistas o al coordinador para que lo corrijan, y después repite la inscripción.',
+    notes: [
+      'Si algún dato está mal de verdad, no lo cambies en el formulario: avisa a su catequista, al coordinador del grupo o a grupojoven@sanpas.es para que lo corrijan y, cuando te lo confirmen, repite la inscripción desde el portal.',
+    ],
     actions: [{ label: 'Escribir el código', action: 'enter_code' }],
   },
 
@@ -209,12 +234,15 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
   p_correo: {
     message: ['Prueba esto:'],
     steps: [
-      'Mira en la carpeta de spam y en «Promociones».',
-      'Espera unos minutos: a veces tarda.',
+      'El correo llega desde no-reply@sanpas.es. Búscalo también en spam, «Promociones» y «Notificaciones».',
+      'Espera unos minutos: puede tardar, sobre todo si tu correo no es de Gmail o Hotmail, porque algunos proveedores bloquean los correos automáticos.',
       'Comprueba que escribiste bien el correo.',
       'Si lo pediste hace poco, puede que no te mandemos otro enseguida: busca el primero.',
     ],
-    note: 'Si entras con código, el correo va al email de contacto que nos diste al apuntarle. Si ese correo ya no lo usas, habla con sus catequistas para cambiarlo.',
+    notes: [
+      'Si entras con código, el correo va al email de contacto que tenemos guardado. Si está mal, pide a su catequista o al coordinador del grupo que lo cambien, o escribe a grupojoven@sanpas.es con el nombre de tu hijo/a y el correo antiguo.',
+      'Si el correo está bien pero no te llega, o al verificar te da error, escribe a grupojoven@sanpas.es desde ese mismo correo explicando el problema: lo verificarán a mano.',
+    ],
   },
 
   p_formulario: {
@@ -234,17 +262,28 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
     message: ['Algunos consejos:'],
     steps: [
       'Escanea el código QR con la cámara del móvil. Si ya estás en el móvil, usa el enlace «Abre la verificación en este mismo dispositivo».',
-      'Haz las fotos con buena luz, sin reflejos y con el documento entero.',
-      'No cierres la pestaña del portal: cuando termines en el móvil, el proceso sigue solo.',
+      'Cuando te pida permiso para usar la cámara, pulsa «Permitir»: sin él no se puede leer el DNI.',
+      'Haz las fotos con buena luz, sin reflejos y con el documento entero: primero por delante y luego por detrás.',
+      'No cierres la pestaña del portal. Si lo haces todo desde el móvil, al terminar vuelve a esa pestaña: no le des a «Atrás» ni recargues la página.',
       'El código QR caduca. Si ha caducado, cancela y vuelve a empezar.',
       'Si es menor de 14 años y no tiene DNI, marca la casilla y verifica el DNI de su padre, madre o tutor.',
+    ],
+    notes: [
+      'Si no consigues que funcione de ninguna manera, envía un correo a grupojoven@sanpas.es, desde el correo que quieras usar como email de contacto, con el DNI escaneado por delante y por detrás (o una foto de cada cara), indicando el formulario al que intentas acceder y describiendo el problema.',
     ],
   },
 
   p_enviado: {
-    message: [
-      'Si hay algún problema con la inscripción, te llegará un correo de «Incidencia en formulario». Si no te llega ninguno, está todo bien.',
+    message: ['Comprueba estas dos cosas, como se explica en la guía:'],
+    steps: [
+      'Que al pulsar «Enviar» te apareció la pantalla de confirmación del formulario.',
+      'Que te ha llegado el resguardo (acuse de recibo) con la copia de tus respuestas, al correo que escribiste al principio del formulario. Míralo también en spam, «Promociones» y «Notificaciones».',
+    ],
+    notes: [
+      'Si te ha llegado el resguardo, hemos recibido tu formulario. Si no te ha llegado, nosotros tampoco lo tenemos: tendrás que volver a rellenarlo.',
+      'Si después hubiera algún problema con la inscripción, te llegará un correo de «Incidencia en formulario».',
       'En «Tus formularios», los que ya has respondido aparecen en gris. Si quieres cambiar algo, vuelve a rellenarlo: nos quedamos siempre con la respuesta más reciente.',
     ],
+    actions: [{ label: 'Ver la guía', action: 'guide' }],
   },
 };
