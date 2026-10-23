@@ -20,7 +20,7 @@ import type {
   DniExtractedData,
 } from '../types';
 
-const PORTAL_GUIDE_URL = 'https://sanpas.es/wp-content/uploads/2026/09/GUIA-INSCRIPCIONES.pdf';
+const PORTAL_GUIDE_URL = 'https://sanpas.es/wp-content/uploads/2026/10/GUIA-INSCRIPCIONES.pdf';
 
 export default function HomePage() {
   const [publicId, setPublicId] = useState('');
