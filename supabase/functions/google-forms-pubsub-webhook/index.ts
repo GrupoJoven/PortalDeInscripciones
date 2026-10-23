@@ -7,6 +7,10 @@ const SUPABASE_FUNCTIONS_BASE_URL = `${SUPABASE_URL}/functions/v1`
 const GOOGLE_PUBSUB_VERIFICATION_AUDIENCE =
   Deno.env.get('GOOGLE_PUBSUB_VERIFICATION_AUDIENCE') ||
   `${SUPABASE_URL}/functions/v1/google-forms-pubsub-webhook`
+// Pub/Sub reenvía un mensaje si no recibe un 2xx dentro del plazo de
+// confirmación (60 s en la suscripción). Un evento 'pending' más reciente que
+// esto se considera todavía en curso en otra invocación.
+const REENTREGA_EN_CURSO_MS = 10 * 60 * 1000
 
 function jsonResponse(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload, null, 2), {
@@ -114,8 +118,56 @@ Deno.serve(async (req) => {
       .select('id')
       .single()
 
-    if (insertError || !insertedEvent) {
+    let eventId: string
+
+    if (insertError?.code === '23505' && messageId) {
+      // Reentrega de un mensaje que ya se guardó (índice único sobre
+      // pubsub_message_id). Antes esto lanzaba un error y respondía 500, así
+      // que Pub/Sub lo reintentaba sin parar durante los 7 días de retención.
+      const { data: existingEvent, error: existingError } = await supabase
+        .from('google_form_events')
+        .select('id, processing_status, received_at')
+        .eq('pubsub_message_id', messageId)
+        .single()
+
+      if (existingError || !existingEvent) {
+        throw existingError || new Error('No se encontró el evento duplicado.')
+      }
+
+      const yaTerminado =
+        existingEvent.processing_status === 'processed' ||
+        existingEvent.processing_status === 'ignored'
+      const enCurso =
+        existingEvent.processing_status === 'pending' &&
+        Date.now() - new Date(existingEvent.received_at).getTime() < REENTREGA_EN_CURSO_MS
+
+      if (yaTerminado || enCurso) {
+        return jsonResponse({
+          ok: true,
+          duplicate: true,
+          event_id: existingEvent.id,
+          processing_status: existingEvent.processing_status,
+        })
+      }
+
+      // El primer intento se cortó o falló: se vuelve a procesar el mismo
+      // evento. received_at se actualiza para que otra reentrega que llegue
+      // mientras tanto lo vea como en curso y no lo procese en paralelo.
+      eventId = existingEvent.id
+
+      await supabase
+        .from('google_form_events')
+        .update({
+          processing_status: 'pending',
+          received_at: new Date().toISOString(),
+          processed_at: null,
+          error: null,
+        })
+        .eq('id', eventId)
+    } else if (insertError || !insertedEvent) {
       throw insertError || new Error('No se pudo insertar el evento.')
+    } else {
+      eventId = insertedEvent.id
     }
 
     let syncResult: unknown = null
@@ -131,7 +183,7 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           google_form_id: googleFormId,
           registration_form_id: registrationFormId,
-          last_event_id: insertedEvent.id,
+          last_event_id: eventId,
         }),
       })
 
@@ -146,7 +198,7 @@ Deno.serve(async (req) => {
             processed_at: new Date().toISOString(),
             error: JSON.stringify(syncJson ?? { status: syncResp.status }),
           })
-          .eq('id', insertedEvent.id)
+          .eq('id', eventId)
 
         return jsonResponse(
           {
@@ -154,7 +206,7 @@ Deno.serve(async (req) => {
             stored: true,
             synced: false,
             processed_response: false,
-            event_id: insertedEvent.id,
+            event_id: eventId,
             sync_result: syncJson,
           },
           500
@@ -182,7 +234,7 @@ Deno.serve(async (req) => {
             processed_at: new Date().toISOString(),
             error: JSON.stringify(processJson ?? { status: processResp.status }),
           })
-          .eq('id', insertedEvent.id)
+          .eq('id', eventId)
 
         return jsonResponse(
           {
@@ -190,7 +242,7 @@ Deno.serve(async (req) => {
             stored: true,
             synced: true,
             processed_response: false,
-            event_id: insertedEvent.id,
+            event_id: eventId,
             sync_result: syncJson,
             process_result: processJson,
           },
@@ -205,7 +257,7 @@ Deno.serve(async (req) => {
           processed_at: new Date().toISOString(),
           error: null,
         })
-        .eq('id', insertedEvent.id)
+        .eq('id', eventId)
     } else {
       await supabase
         .from('google_form_events')
@@ -214,7 +266,7 @@ Deno.serve(async (req) => {
           processed_at: new Date().toISOString(),
           error: null,
         })
-        .eq('id', insertedEvent.id)
+        .eq('id', eventId)
     }
 
     return jsonResponse({
@@ -222,7 +274,7 @@ Deno.serve(async (req) => {
       stored: true,
       synced: googleFormId && eventType === 'RESPONSES',
       processed_response: googleFormId && eventType === 'RESPONSES',
-      event_id: insertedEvent.id,
+      event_id: eventId,
       google_form_id: googleFormId,
       event_type: eventType,
       pubsub_message_id: messageId,
