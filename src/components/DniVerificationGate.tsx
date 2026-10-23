@@ -27,6 +27,10 @@ type DniVerificationGateProps = {
 const functionsUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 
 const INTERVALO_SONDEO_MS = 2500;
+// Mientras nadie ha escaneado el código basta con mirar con menos frecuencia:
+// pasar de "esperando" a "móvil conectado" es solo informativo. En cuanto el
+// móvil se conecta se vuelve al intervalo corto.
+const INTERVALO_SONDEO_ESPERA_MS = 5000;
 
 /**
  * Marca la URL de captura para que sepa que se abre en una pestaña nueva del
@@ -81,6 +85,16 @@ export default function DniVerificationGate({
   const [remaining, setRemaining] = useState('');
 
   const verifiedRef = useRef(false);
+  // Copia del estado que el bucle de sondeo puede leer al momento, sin
+  // esperar a que React vuelva a renderizar.
+  const statusRef = useRef<DniSessionStatus>('pending');
+  const onVerifiedRef = useRef(onVerified);
+  onVerifiedRef.current = onVerified;
+
+  const actualizarEstado = (nuevo: DniSessionStatus) => {
+    statusRef.current = nuevo;
+    setStatus(nuevo);
+  };
 
   // --- Crear la sesión y generar el QR ------------------------------------
   const empezar = async () => {
@@ -110,7 +124,7 @@ export default function DniVerificationGate({
       setMobileUrl(result.mobile_url);
       setDesktopToken(result.desktop_token);
       setExpiresAt(result.expires_at ? new Date(result.expires_at).getTime() : null);
-      setStatus('pending');
+      actualizarEstado('pending');
       setPhase('qr');
     } catch (err) {
       console.error(err);
@@ -129,26 +143,74 @@ export default function DniVerificationGate({
         desktop_token: desktopToken,
       });
 
+      // La sesión ya no existe: la limpieza periódica borra las caducadas.
+      if (!result.ok && result.error === 'invalid_session') {
+        actualizarEstado('expired');
+        return;
+      }
+
       if (!result.ok || !result.status) return;
 
-      setStatus(result.status);
+      actualizarEstado(result.status);
 
       if (result.status === 'confirmed' && !verifiedRef.current) {
         verifiedRef.current = true;
-        onVerified(desktopToken, result.extracted ?? null);
+        onVerifiedRef.current(desktopToken, result.extracted ?? null);
       }
     } catch (err) {
       console.error(err);
     }
-  }, [desktopToken, onVerified]);
+  }, [desktopToken]);
 
+  // Cada consulta es una invocación de la Edge Function, así que solo se
+  // pregunta mientras sirve de algo: se para al caducar o confirmarse, y se
+  // pausa con la pestaña oculta. Al volver a ella se pregunta en el acto, así
+  // que quien termina en el móvil (o en otra pestaña) no nota la pausa.
   useEffect(() => {
     if (phase !== 'qr' || !desktopToken) return;
 
-    sondear();
-    const intervalo = window.setInterval(sondear, INTERVALO_SONDEO_MS);
+    let temporizador: number | undefined;
+    let cancelado = false;
+    let enVuelo = false;
 
-    return () => window.clearInterval(intervalo);
+    const debeParar = () =>
+      cancelado ||
+      document.hidden ||
+      verifiedRef.current ||
+      statusRef.current === 'confirmed' ||
+      statusRef.current === 'expired';
+
+    const ciclo = async () => {
+      window.clearTimeout(temporizador);
+      if (enVuelo || debeParar()) return;
+
+      enVuelo = true;
+      try {
+        await sondear();
+      } finally {
+        enVuelo = false;
+      }
+
+      if (debeParar()) return;
+
+      temporizador = window.setTimeout(
+        ciclo,
+        statusRef.current === 'pending' ? INTERVALO_SONDEO_ESPERA_MS : INTERVALO_SONDEO_MS,
+      );
+    };
+
+    const alCambiarVisibilidad = () => {
+      if (!document.hidden) ciclo();
+    };
+
+    ciclo();
+    document.addEventListener('visibilitychange', alCambiarVisibilidad);
+
+    return () => {
+      cancelado = true;
+      window.clearTimeout(temporizador);
+      document.removeEventListener('visibilitychange', alCambiarVisibilidad);
+    };
   }, [phase, desktopToken, sondear]);
 
   // --- Cuenta atrás -------------------------------------------------------
@@ -160,7 +222,7 @@ export default function DniVerificationGate({
 
       if (restante <= 0) {
         setRemaining('caducado');
-        setStatus('expired');
+        actualizarEstado('expired');
         return;
       }
 

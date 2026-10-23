@@ -63,7 +63,7 @@ select net.http_post(
 -- El resultado de esa llamada (created, renewed, synced, process_result,
 -- errors) se puede ver con la consulta de abajo, usando el request_id que
 -- devuelve el select anterior. Ojo: `order by id desc limit 1` puede enseñar
--- otra petición (el cron cada 6 h, o el de fotos DNI cada 15 min).
+-- otra petición (el cron cada 6 h, o el de fotos DNI de cada noche).
 --
 --   select id, created, status_code, timed_out, error_msg, content::jsonb
 --   from net._http_response

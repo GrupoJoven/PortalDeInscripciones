@@ -1,9 +1,15 @@
 -- Limpieza periódica de las sesiones de verificación de DNI y de sus fotos.
 --
--- El cron 'limpiar-fotos-dni' llama cada 15 minutos a dni-verification-cleanup,
--- que borra las sesiones caducadas y sus fotos del bucket dni_uploads. La
--- función solo actúa si recibe la cabecera x-cleanup-secret con el mismo
--- valor que el secreto DNI_CLEANUP_SECRET de las Edge Functions.
+-- El cron 'limpiar-fotos-dni' llama una vez al día (03:00 UTC) a
+-- dni-verification-cleanup, que borra las sesiones caducadas y sus fotos del
+-- bucket dni_uploads. La función solo actúa si recibe la cabecera
+-- x-cleanup-secret con el mismo valor que el secreto DNI_CLEANUP_SECRET de
+-- las Edge Functions.
+--
+-- Antes corría cada 15 minutos, pero eran 96 invocaciones al día casi
+-- siempre sin nada que borrar. A cambio, una sesión abandonada (con sus
+-- fotos) puede quedarse hasta un día más después de caducar. Las que se
+-- confirman no cambian: dni-verification-confirm borra sus fotos al momento.
 --
 -- Qué pasó: el secreto escrito a mano dentro del cron dejó de coincidir con
 -- DNI_CLEANUP_SECRET. La función respondía 401 en cada pasada y no se borraba
@@ -66,7 +72,7 @@ where exists (select 1 from cron.job where jobname = 'limpiar-fotos-dni');
 -- en net._http_response y no se puede comprobar si ha ido bien.
 select cron.schedule(
   'limpiar-fotos-dni',
-  '*/15 * * * *',
+  '0 3 * * *',
   $$
   select net.http_post(
     url := 'https://pqycvrpdyebshkfaxzmi.supabase.co/functions/v1/dni-verification-cleanup',
@@ -83,7 +89,7 @@ select cron.schedule(
 );
 
 -- ---------------------------------------------------------------------------
--- 3) Primera limpieza manual (para no esperar al siguiente cuarto de hora).
+-- 3) Primera limpieza manual (para no esperar a la pasada de la noche).
 -- ---------------------------------------------------------------------------
 
 select net.http_post(

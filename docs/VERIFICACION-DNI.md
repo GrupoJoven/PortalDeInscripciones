@@ -426,7 +426,7 @@ añade un secreto más junto a los del paso 5:
 
 Sigue los pasos de `scripts/cron-limpiar-fotos-dni.sql` en el editor SQL. El
 script guarda el valor de `DNI_CLEANUP_SECRET` también en Supabase Vault y
-programa el cron `limpiar-fotos-dni` (cada 15 minutos) para que lo lea de ahí,
+programa el cron `limpiar-fotos-dni` (una vez al día, a las 03:00 UTC) para que lo lea de ahí,
 así el secreto no queda escrito en claro dentro del cron y se puede volver a
 consultar si hace falta.
 
