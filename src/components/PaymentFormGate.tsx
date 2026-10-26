@@ -374,6 +374,10 @@ export default function PaymentFormGate({ form, accessPublicId, onCancel }: Paym
           </div>
 
           <div className="p-6 space-y-4 text-slate-700">
+            <p className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-amber-900 text-sm font-medium">
+              IBAN: ES1031590078512779528427
+              BENEFICIARIO: PARROQUIA SAN PASCUAL BAILÓN
+            </p>
             <p className="text-lg font-bold text-slate-900">
               En este formulario solo se puede adjuntar <span className="text-red-600">UN ÚNICO</span>{' '}
               justificante de pago.
@@ -483,11 +487,10 @@ export default function PaymentFormGate({ form, accessPublicId, onCancel }: Paym
                       {withSlashBreaks(activity.label)}
                     </h3>
                     <span
-                      className={`text-xs font-bold px-2.5 py-1 rounded-full whitespace-nowrap ${
-                        rows.length > 0
+                      className={`text-xs font-bold px-2.5 py-1 rounded-full whitespace-nowrap ${rows.length > 0
                           ? 'bg-indigo-100 text-indigo-700'
                           : 'bg-slate-200 text-slate-500'
-                      }`}
+                        }`}
                     >
                       {rows.length} {rows.length === 1 ? 'participante' : 'participantes'}
                     </span>
@@ -541,13 +544,11 @@ export default function PaymentFormGate({ form, accessPublicId, onCancel }: Paym
                               autoFocus={row.id === focusRowId}
                               aria-label={`${activity.label}: participante ${index + 1}`}
                               aria-invalid={!!row.error}
-                              className={`flex-1 min-w-0 px-3 py-2.5 bg-white border rounded-xl outline-none transition-all focus:ring-4 ${
-                                byId ? 'font-mono' : ''
-                              } ${
-                                row.error
+                              className={`flex-1 min-w-0 px-3 py-2.5 bg-white border rounded-xl outline-none transition-all focus:ring-4 ${byId ? 'font-mono' : ''
+                                } ${row.error
                                   ? 'border-red-300 focus:ring-red-100 focus:border-red-500'
                                   : 'border-slate-200 focus:ring-indigo-100 focus:border-indigo-500'
-                              }`}
+                                }`}
                             />
                           )}
 
