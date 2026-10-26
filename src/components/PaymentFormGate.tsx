@@ -375,8 +375,8 @@ export default function PaymentFormGate({ form, accessPublicId, onCancel }: Paym
 
           <div className="p-6 space-y-4 text-slate-700">
             <p className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-amber-900 text-sm font-medium">
-              IBAN: ES1031590078512779528427
-              BENEFICIARIO: PARROQUIA SAN PASCUAL BAILÓN
+              IBAN: ES1031590078512779528427<br>
+                BENEFICIARIO: PARROQUIA SAN PASCUAL BAILÓN
             </p>
             <p className="text-lg font-bold text-slate-900">
               En este formulario solo se puede adjuntar <span className="text-red-600">UN ÚNICO</span>{' '}
@@ -488,8 +488,8 @@ export default function PaymentFormGate({ form, accessPublicId, onCancel }: Paym
                     </h3>
                     <span
                       className={`text-xs font-bold px-2.5 py-1 rounded-full whitespace-nowrap ${rows.length > 0
-                          ? 'bg-indigo-100 text-indigo-700'
-                          : 'bg-slate-200 text-slate-500'
+                        ? 'bg-indigo-100 text-indigo-700'
+                        : 'bg-slate-200 text-slate-500'
                         }`}
                     >
                       {rows.length} {rows.length === 1 ? 'participante' : 'participantes'}
