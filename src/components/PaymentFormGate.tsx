@@ -24,6 +24,7 @@ import type {
   PaymentActivity,
   PaymentActivityKey,
 } from '../../supabase/functions/_shared/paymentActivities';
+import { BANK_DETAILS, useCopyBankDetail } from '../lib/bankDetails';
 import type {
   PaymentFormAccessResponse,
   PaymentValidateIdsResponse,
@@ -48,12 +49,6 @@ type ParticipantRow = {
 type RowsByActivity = Partial<Record<PaymentActivityKey, ParticipantRow[]>>;
 
 const NOTICE_LOCK_SECONDS = 5;
-
-/** Datos de la transferencia; el IBAN se muestra en grupos de 4 pero se copia sin espacios. */
-const BANK_DETAILS = [
-  { label: 'IBAN', value: 'ES1031590078512779528427', display: 'ES10 3159 0078 5127 7952 8427' },
-  { label: 'Beneficiario', value: 'PARROQUIA SAN PASCUAL BAILÓN', display: 'PARROQUIA SAN PASCUAL BAILÓN' },
-] as const;
 
 const functionsUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 
@@ -129,20 +124,7 @@ export default function PaymentFormGate({ form, accessPublicId, onCancel }: Paym
 
   const noticeLocked = secondsLeft > 0;
 
-  const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
-
-  const copyBankDetail = async (label: string, value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopiedLabel(label);
-      window.setTimeout(
-        () => setCopiedLabel((current) => (current === label ? null : current)),
-        2000,
-      );
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  const { copiedLabel, copyBankDetail } = useCopyBankDetail();
 
   // --- Participantes ---------------------------------------------------------
   const updateRows = (

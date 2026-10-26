@@ -1,9 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { AlertCircle, Calculator, Clock, Minus, Plus, Receipt } from 'lucide-react';
+import {
+  AlertCircle,
+  Calculator,
+  Check,
+  Clock,
+  Copy,
+  Landmark,
+  Minus,
+  Plus,
+  Receipt,
+} from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
+import { BANK_DETAILS, useCopyBankDetail } from '../lib/bankDetails';
 import { supabase } from '../lib/supabaseClient';
 import { isFormCurrentlyOpen } from '../types';
 import {
@@ -109,6 +120,7 @@ export default function PaymentCalculatorPage() {
   const [counts, setCounts] = useState<Record<string, Partial<Record<PaymentActivityKey, number>>>>(
     {},
   );
+  const { copiedLabel, copyBankDetail } = useCopyBankDetail();
 
   useEffect(() => {
     const load = async () => {
@@ -158,6 +170,8 @@ export default function PaymentCalculatorPage() {
 
   const grandTotal = amounts.reduce((sum, amount) => sum + amount.total, 0);
   const formsWithAmount = amounts.filter((amount) => amount.total > 0).length;
+  // Los datos de la cuenta solo se muestran si hay algún pago abierto o próximo.
+  const hasPayments = forms.length > 0;
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-12">
@@ -355,6 +369,56 @@ export default function PaymentCalculatorPage() {
             actividades de pagos distintos no se suman.
           </p>
         </div>
+      )}
+
+      {hasPayments && (
+        <section className="mt-8 bg-white border border-slate-200 rounded-3xl shadow-sm px-5 sm:px-6 py-5">
+          <div className="flex items-start gap-3 mb-4">
+            <Landmark className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-1" />
+            <div className="min-w-0">
+              <h2 className="text-xl font-bold text-slate-900">Datos para hacer el pago</h2>
+              <p className="text-sm text-slate-500 mt-1">
+                Haz la transferencia a esta cuenta. Pulsa sobre cada dato para copiarlo.
+              </p>
+            </div>
+          </div>
+  
+          <div className="grid gap-3 sm:grid-cols-2">
+            {BANK_DETAILS.map(({ label, value, display }) => {
+              const copied = copiedLabel === label;
+  
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => copyBankDetail(label, value)}
+                  className={`flex items-center gap-3 text-left px-4 py-3 rounded-2xl border transition-colors ${copied
+                    ? 'bg-emerald-50 border-emerald-300'
+                    : 'bg-slate-50 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+                    }`}
+                  aria-label={`Copiar ${label}: ${display}`}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      {label}
+                    </span>
+                    <span
+                      className={`block font-bold text-slate-900 break-words ${label === 'IBAN' ? 'font-mono' : ''}`}
+                    >
+                      {display}
+                    </span>
+                  </span>
+                  <span
+                    className={`flex items-center gap-1 text-xs font-bold flex-shrink-0 ${copied ? 'text-emerald-700' : 'text-slate-500'}`}
+                  >
+                    {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    {copied ? 'Copiado' : 'Copiar'}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
       )}
     </div>
   );
