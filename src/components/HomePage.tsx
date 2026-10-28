@@ -12,7 +12,12 @@ import PublicIdRecoveryModal from './PublicIdRecoveryModal';
 import PublicFormAudienceCheck from './PublicFormAudienceCheck';
 import InscriptionAssistant from './assistant/InscriptionAssistant';
 import type { AssistantAction } from './assistant/assistantTree';
-import { PAYMENT_TUTORIAL_ID, tutorialPath } from '../lib/tutorials';
+import {
+  COMMUNION_TUTORIAL_ID,
+  NEW_MEMBERS_TUTORIAL_ID,
+  PAYMENT_TUTORIAL_ID,
+  tutorialPath,
+} from '../lib/tutorials';
 
 import type {
   PublicHomeForm,
@@ -83,6 +88,12 @@ export default function HomePage() {
         break;
       case 'payment_tutorial':
         navigate(tutorialPath(PAYMENT_TUTORIAL_ID));
+        break;
+      case 'communion_tutorial':
+        navigate(tutorialPath(COMMUNION_TUTORIAL_ID));
+        break;
+      case 'new_members_tutorial':
+        navigate(tutorialPath(NEW_MEMBERS_TUTORIAL_ID));
         break;
       case 'guide':
         window.open(PORTAL_GUIDE_URL, '_blank', 'noopener,noreferrer');

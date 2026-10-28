@@ -56,7 +56,7 @@ export default function TutorialsPage() {
                 controls
                 playsInline
                 preload="metadata"
-                className="w-full rounded-2xl bg-slate-900"
+                className="w-full aspect-video rounded-2xl bg-slate-900"
               >
                 Tu navegador no puede reproducir este vídeo.{' '}
                 <a href={tutorial.videoUrl} target="_blank" rel="noopener noreferrer" className="underline">

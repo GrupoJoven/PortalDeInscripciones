@@ -11,6 +11,8 @@ export type AssistantAction =
   | 'public_forms'
   | 'calculator'
   | 'payment_tutorial'
+  | 'communion_tutorial'
+  | 'new_members_tutorial'
   | 'guide';
 
 export type AssistantNodeId =
@@ -20,6 +22,7 @@ export type AssistantNodeId =
   | 'con_codigo'
   | 'sin_codigo'
   | 'nuevo'
+  | 'dudas_inscripcion'
   | 'pagar'
   | 'dudas_pago'
   | 'incidencia'
@@ -136,7 +139,29 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
       'No uses enlaces del formulario que te hayan pasado otras personas: esas inscripciones se borran.',
       PROXIMAMENTE_NOTE,
     ],
+    options: [{ label: 'Tengo dudas con el formulario de inscripción', next: 'dudas_inscripcion' }],
     actions: [{ label: 'Ver los formularios públicos', action: 'public_forms' }],
+  },
+
+  dudas_inscripcion: {
+    message: [
+      'Tenemos vídeos tutoriales que explican, paso a paso, cómo hacer la inscripción en los formularios públicos.',
+      '¿Cuál quieres ver?',
+    ],
+    notes: [
+      'Si ya está en un grupo de Preconfirmación o Confirmación del Grupo Joven, no uses los formularios públicos: se inscribe con su código.',
+      'Si después de verlo sigues con dudas, escribe a grupojoven@sanpas.es contándonos en qué paso te has quedado.',
+    ],
+    options: [
+      { label: 'Ya está en un grupo de Preconfirmación o Confirmación', next: 'tiene_grupo' },
+    ],
+    actions: [
+      { label: 'Ver el vídeo: inscripción en comunión', action: 'communion_tutorial' },
+      {
+        label: 'Ver el vídeo: nuevos en Preconfirmación o Confirmación',
+        action: 'new_members_tutorial',
+      },
+    ],
   },
 
   // ---------------------------------------------------------------------
@@ -247,6 +272,7 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
       { label: 'No sé el código de mi hijo/a', next: 'sin_codigo' },
       { label: 'No encuentro el formulario de la actividad', next: 'p_formulario' },
       { label: 'Tengo dudas con el formulario de pago', next: 'dudas_pago' },
+      { label: 'Tengo dudas con el formulario de inscripción', next: 'dudas_inscripcion' },
       { label: 'Falla la verificación del DNI', next: 'p_dni' },
       { label: 'Ya lo he enviado: ¿está bien?', next: 'p_enviado' },
     ],
