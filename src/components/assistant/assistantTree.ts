@@ -10,6 +10,7 @@ export type AssistantAction =
   | 'recover_code'
   | 'public_forms'
   | 'calculator'
+  | 'payment_tutorial'
   | 'guide';
 
 export type AssistantNodeId =
@@ -20,6 +21,7 @@ export type AssistantNodeId =
   | 'sin_codigo'
   | 'nuevo'
   | 'pagar'
+  | 'dudas_pago'
   | 'incidencia'
   | 'inc_email'
   | 'inc_datos'
@@ -149,11 +151,26 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
       'Entra en el formulario de pago (en «Formularios públicos» o en «Tus formularios») y añade a cada hijo en su actividad. En las actividades de Preconfirmación y Confirmación te pediremos el código de cada hijo.',
       'Solo se puede adjuntar un justificante por formulario: si has hecho varios pagos, rellena un formulario por cada pago.',
     ],
-    options: [{ label: 'No sé el código de mis hijos', next: 'sin_codigo' }],
+    options: [
+      { label: 'Tengo dudas con el formulario de pago', next: 'dudas_pago' },
+      { label: 'No sé el código de mis hijos', next: 'sin_codigo' },
+    ],
     actions: [
       { label: 'Abrir la calculadora', action: 'calculator' },
       { label: 'Ver los formularios', action: 'public_forms' },
     ],
+  },
+
+  dudas_pago: {
+    message: [
+      'Tenemos un vídeo tutorial que explica, paso a paso, cómo acceder a un formulario de pago y cómo rellenarlo.',
+      '¿Quieres verlo?',
+    ],
+    notes: [
+      'Si después de verlo sigues con dudas, escribe a grupojoven@sanpas.es contándonos en qué paso te has quedado.',
+    ],
+    options: [{ label: 'No sé el código de mis hijos', next: 'sin_codigo' }],
+    actions: [{ label: 'Ver el vídeo tutorial', action: 'payment_tutorial' }],
   },
 
   // ---------------------------------------------------------------------
@@ -229,6 +246,7 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
       { label: 'No me llega el correo de verificación', next: 'p_correo' },
       { label: 'No sé el código de mi hijo/a', next: 'sin_codigo' },
       { label: 'No encuentro el formulario de la actividad', next: 'p_formulario' },
+      { label: 'Tengo dudas con el formulario de pago', next: 'dudas_pago' },
       { label: 'Falla la verificación del DNI', next: 'p_dni' },
       { label: 'Ya lo he enviado: ¿está bien?', next: 'p_enviado' },
     ],

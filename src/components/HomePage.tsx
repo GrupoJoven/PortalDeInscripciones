@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { X, Mail, Lock, AlertCircle, ShieldCheck, UserRound, Globe, BookOpen, Calculator, MessageCircleQuestion } from 'lucide-react';
+import { X, Mail, Lock, AlertCircle, ShieldCheck, UserRound, Globe, BookOpen, Calculator, CirclePlay, MessageCircleQuestion } from 'lucide-react';
 
 import { supabase } from '../lib/supabaseClient';
 import { isFormCurrentlyOpen } from '../types';
@@ -12,6 +12,7 @@ import PublicIdRecoveryModal from './PublicIdRecoveryModal';
 import PublicFormAudienceCheck from './PublicFormAudienceCheck';
 import InscriptionAssistant from './assistant/InscriptionAssistant';
 import type { AssistantAction } from './assistant/assistantTree';
+import { PAYMENT_TUTORIAL_ID, tutorialPath } from '../lib/tutorials';
 
 import type {
   PublicHomeForm,
@@ -79,6 +80,9 @@ export default function HomePage() {
         break;
       case 'calculator':
         navigate('/calculadora-pagos');
+        break;
+      case 'payment_tutorial':
+        navigate(tutorialPath(PAYMENT_TUTORIAL_ID));
         break;
       case 'guide':
         window.open(PORTAL_GUIDE_URL, '_blank', 'noopener,noreferrer');
@@ -441,6 +445,13 @@ export default function HomePage() {
           >
             <Calculator className="w-5 h-5 flex-shrink-0" />
             Calculadora de pagos
+          </Link>
+          <Link
+            to="/tutoriales"
+            className="inline-flex items-center justify-center gap-2 text-indigo-700 font-bold hover:text-indigo-800 underline-offset-4 hover:underline"
+          >
+            <CirclePlay className="w-5 h-5 flex-shrink-0" />
+            Vídeos tutoriales
           </Link>
         </motion.div>
       </div>
