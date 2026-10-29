@@ -1,6 +1,7 @@
-// Vídeos de la página «Tutoriales». Para añadir uno basta con añadirlo aquí
-// (y su id a TutorialId). El id se usa en el enlace (/tutoriales?video=<id>)
-// para abrir directamente ese vídeo, por ejemplo desde el asistente.
+// Vídeos de la página «Tutoriales», agrupados en secciones. Para añadir uno
+// basta con añadirlo aquí (y su id a TutorialId). El id se usa en el enlace
+// (/tutoriales?video=<id>) para abrir directamente ese vídeo en su sección,
+// por ejemplo desde el asistente.
 
 export type TutorialId =
   | 'inscripcion-comunion'
@@ -17,14 +18,20 @@ export type Tutorial = {
   videoUrl: string;
 };
 
+export type TutorialCategoryId = 'inicio-curso' | 'acampadas' | 'pagos';
+
 export type TutorialCategory = {
+  id: TutorialCategoryId;
   title: string;
+  description: string;
   tutorials: Tutorial[];
 };
 
 export const TUTORIAL_CATEGORIES: TutorialCategory[] = [
   {
+    id: 'inicio-curso',
     title: 'Inscripción de inicio de curso',
+    description: 'La inscripción que se hace al empezar el curso.',
     tutorials: [
       {
         id: 'inscripcion-comunion',
@@ -49,7 +56,9 @@ export const TUTORIAL_CATEGORIES: TutorialCategory[] = [
     ],
   },
   {
+    id: 'acampadas',
     title: 'Inscripción en acampadas',
+    description: 'Cómo apuntarse a las acampadas.',
     tutorials: [
       {
         id: 'acampada-comunion',
@@ -66,7 +75,9 @@ export const TUTORIAL_CATEGORIES: TutorialCategory[] = [
     ],
   },
   {
+    id: 'pagos',
     title: 'Pagos',
+    description: 'Cómo rellenar el formulario de pago de una actividad.',
     tutorials: [
       {
         id: 'formulario-pago',
