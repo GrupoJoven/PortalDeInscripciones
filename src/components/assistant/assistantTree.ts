@@ -2,18 +2,19 @@
 //
 // Cada nodo es un mensaje del asistente con, opcionalmente, pasos numerados,
 // una nota final, opciones que llevan a otro nodo y acciones que hacen algo
-// en el portal (escribir el código, abrir la calculadora...). Para cambiar
-// textos o añadir casos basta con tocar este archivo.
+// en el portal (escribir el código, abrir la calculadora, abrir un vídeo de
+// «Tutoriales»...). Para cambiar textos o añadir casos basta con tocar este
+// archivo.
+
+import type { TutorialId } from '../../lib/tutorials';
 
 export type AssistantAction =
   | 'enter_code'
   | 'recover_code'
   | 'public_forms'
   | 'calculator'
-  | 'payment_tutorial'
-  | 'communion_tutorial'
-  | 'new_members_tutorial'
-  | 'guide';
+  | 'guide'
+  | { tutorial: TutorialId };
 
 export type AssistantNodeId =
   | 'start'
@@ -22,6 +23,8 @@ export type AssistantNodeId =
   | 'con_codigo'
   | 'sin_codigo'
   | 'nuevo'
+  | 'dudas_formulario'
+  | 'dudas_con_codigo'
   | 'dudas_inscripcion'
   | 'pagar'
   | 'dudas_pago'
@@ -50,6 +53,9 @@ const PROXIMAMENTE_NOTE =
 // contacto, solo donde llega el resguardo (así lo explica la guía).
 const RECEIPT_EMAIL_STEP =
   'Lo primero que te pedirá el formulario es un correo electrónico: es solo donde Google te enviará el resguardo de tus respuestas. No tiene por qué ser el email de contacto.';
+
+const TUTORIAL_HELP_NOTE =
+  'Si después de verlo sigues con dudas, escribe a grupojoven@sanpas.es contándonos en qué paso te has quedado.';
 
 const SEND_AND_CHECK_STEP =
   'Pulsa «Enviar» y comprueba que aparece la pantalla de confirmación. Después, mira que te llega el resguardo a ese correo: si no te llega, es que no lo hemos recibido.';
@@ -109,6 +115,7 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
       'Si algún dato rellenado está mal, no envíes el formulario: apunta qué está mal y avisa a su catequista, al coordinador del grupo o a grupojoven@sanpas.es. Cuando te confirmen que está corregido, vuelve a entrar desde el portal.',
       PROXIMAMENTE_NOTE,
     ],
+    options: [{ label: 'Tengo dudas con el formulario de inscripción', next: 'dudas_con_codigo' }],
     actions: [{ label: 'Escribir el código', action: 'enter_code' }],
   },
 
@@ -143,23 +150,66 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
     actions: [{ label: 'Ver los formularios públicos', action: 'public_forms' }],
   },
 
+  // Vídeos tutoriales de inscripción: unos para quien entra con código y
+  // otros para quien usa los formularios públicos.
+
+  dudas_formulario: {
+    message: [
+      'Tenemos vídeos tutoriales que explican, paso a paso, cómo rellenar cada formulario de inscripción.',
+      '¿Tu hijo/a ya está en un grupo de Preconfirmación o Confirmación del Grupo Joven este curso?',
+    ],
+    options: [
+      {
+        label: 'Sí, ya está en un grupo de Preconfirmación o Confirmación del Grupo Joven.',
+        next: 'dudas_con_codigo',
+      },
+      { label: 'No, es nuevo/a o pertenece a comunión/postcomunión.', next: 'dudas_inscripcion' },
+    ],
+  },
+
+  dudas_con_codigo: {
+    message: [
+      'Estos vídeos explican cómo inscribirle con su código, desde «Tus formularios».',
+      '¿Cuál quieres ver?',
+    ],
+    notes: [TUTORIAL_HELP_NOTE],
+    options: [{ label: 'Es nuevo/a o pertenece a comunión/postcomunión', next: 'dudas_inscripcion' }],
+    actions: [
+      {
+        label: 'Ver el vídeo: inicio de curso de Preconfirmación o Confirmación',
+        action: { tutorial: 'inscripcion-continuan' },
+      },
+      {
+        label: 'Ver el vídeo: acampada de Preconfirmación o Confirmación',
+        action: { tutorial: 'acampada-preconfirmacion' },
+      },
+    ],
+  },
+
   dudas_inscripcion: {
     message: [
-      'Tenemos vídeos tutoriales que explican, paso a paso, cómo hacer la inscripción en los formularios públicos.',
+      'Estos vídeos explican cómo hacer la inscripción en los formularios públicos.',
       '¿Cuál quieres ver?',
     ],
     notes: [
       'Si ya está en un grupo de Preconfirmación o Confirmación del Grupo Joven, no uses los formularios públicos: se inscribe con su código.',
-      'Si después de verlo sigues con dudas, escribe a grupojoven@sanpas.es contándonos en qué paso te has quedado.',
+      TUTORIAL_HELP_NOTE,
     ],
     options: [
-      { label: 'Ya está en un grupo de Preconfirmación o Confirmación', next: 'tiene_grupo' },
+      { label: 'Ya está en un grupo de Preconfirmación o Confirmación', next: 'dudas_con_codigo' },
     ],
     actions: [
-      { label: 'Ver el vídeo: inscripción en comunión', action: 'communion_tutorial' },
       {
-        label: 'Ver el vídeo: nuevos en Preconfirmación o Confirmación',
-        action: 'new_members_tutorial',
+        label: 'Ver el vídeo: inicio de curso de comunión',
+        action: { tutorial: 'inscripcion-comunion' },
+      },
+      {
+        label: 'Ver el vídeo: inicio de curso para nuevos en Preconfirmación o Confirmación',
+        action: { tutorial: 'inscripcion-nuevos' },
+      },
+      {
+        label: 'Ver el vídeo: acampada de comunión o postcomunión',
+        action: { tutorial: 'acampada-comunion' },
       },
     ],
   },
@@ -191,11 +241,9 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
       'Tenemos un vídeo tutorial que explica, paso a paso, cómo acceder a un formulario de pago y cómo rellenarlo.',
       '¿Quieres verlo?',
     ],
-    notes: [
-      'Si después de verlo sigues con dudas, escribe a grupojoven@sanpas.es contándonos en qué paso te has quedado.',
-    ],
+    notes: [TUTORIAL_HELP_NOTE],
     options: [{ label: 'No sé el código de mis hijos', next: 'sin_codigo' }],
-    actions: [{ label: 'Ver el vídeo tutorial', action: 'payment_tutorial' }],
+    actions: [{ label: 'Ver el vídeo tutorial', action: { tutorial: 'formulario-pago' } }],
   },
 
   // ---------------------------------------------------------------------
@@ -272,7 +320,7 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
       { label: 'No sé el código de mi hijo/a', next: 'sin_codigo' },
       { label: 'No encuentro el formulario de la actividad', next: 'p_formulario' },
       { label: 'Tengo dudas con el formulario de pago', next: 'dudas_pago' },
-      { label: 'Tengo dudas con el formulario de inscripción', next: 'dudas_inscripcion' },
+      { label: 'Tengo dudas con el formulario de inscripción', next: 'dudas_formulario' },
       { label: 'Falla la verificación del DNI', next: 'p_dni' },
       { label: 'Ya lo he enviado: ¿está bien?', next: 'p_enviado' },
     ],
