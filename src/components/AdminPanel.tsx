@@ -246,7 +246,7 @@ export default function AdminPanel({
       loadFormsData();
       loadAccessData();
     }
-  }, [user, isCoordinator]);
+  }, [user?.id, isCoordinator]);
 
   const parseGoogleFormRespondentUrl = (rawUrl: string) => {
     const trimmed = rawUrl.trim();

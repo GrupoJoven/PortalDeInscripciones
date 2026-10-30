@@ -3,11 +3,11 @@ import {
   AlertCircle,
   CheckCircle2,
   Copy,
-  ExternalLink,
   KeyRound,
   Link2,
   Mail,
   Search,
+  Send,
   ShieldCheck,
 } from 'lucide-react';
 
@@ -23,13 +23,45 @@ type VerifiedEmail = {
 };
 
 type GeneratedLink = {
+  /** Datos con los que se generó: si cambian, el enlace deja de mostrarse. */
+  inputsKey: string;
   url: string;
   form_title: string;
   summary: string;
+  recipient: string | null;
+  sent_to: string | null;
   warnings: string[];
 };
 
 const MAX_EMAIL_SUGGESTIONS = 8;
+const STORAGE_PREFIX = 'admin-access-links:';
+
+/**
+ * useState que sobrevive a que la pestaña se desmonte (cambiar de pestaña del
+ * panel o de página) mientras dure la sesión del navegador.
+ */
+function useSessionState<T>(key: string, initialValue: T) {
+  const storageKey = STORAGE_PREFIX + key;
+
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const stored = sessionStorage.getItem(storageKey);
+      return stored === null ? initialValue : (JSON.parse(stored) as T);
+    } catch {
+      return initialValue;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(storageKey, JSON.stringify(value));
+    } catch {
+      // Sin almacenamiento disponible el estado sigue funcionando en memoria.
+    }
+  }, [storageKey, value]);
+
+  return [value, setValue] as const;
+}
 
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
 const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -54,13 +86,13 @@ export default function AccessLinksTab({
   forms: RegistrationForm[];
   loadingForms: boolean;
 }) {
-  const [mode, setMode] = useState<LinkMode>('restricted');
+  const [mode, setMode] = useSessionState<LinkMode>('mode', 'restricted');
 
-  const [publicId, setPublicId] = useState('');
-  const [restrictedFormId, setRestrictedFormId] = useState('');
+  const [publicId, setPublicId] = useSessionState('publicId', '');
+  const [restrictedFormId, setRestrictedFormId] = useSessionState('restrictedFormId', '');
 
-  const [publicFormId, setPublicFormId] = useState('');
-  const [emailInput, setEmailInput] = useState('');
+  const [publicFormId, setPublicFormId] = useSessionState('publicFormId', '');
+  const [emailInput, setEmailInput] = useSessionState('emailInput', '');
   const [emailDropdownOpen, setEmailDropdownOpen] = useState(false);
   const [highlightedEmailIndex, setHighlightedEmailIndex] = useState(0);
 
@@ -71,8 +103,9 @@ export default function AccessLinksTab({
 
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
-  const [result, setResult] = useState<GeneratedLink | null>(null);
+  const [storedResult, setStoredResult] = useSessionState<GeneratedLink | null>('result', null);
   const [copied, setCopied] = useState(false);
+  const [sending, setSending] = useState(false);
 
   // Los formularios de pago no se prerrellenan con datos del catecúmeno, así
   // que aquí solo tienen sentido los de inscripción.
@@ -108,14 +141,21 @@ export default function AccessLinksTab({
     loadVerifiedEmails();
   }, []);
 
+  const normalizedEmailInput = normalizeEmail(emailInput);
+
+  const linkRequest =
+    mode === 'restricted'
+      ? { mode, form_id: restrictedFormId, public_id: publicId.trim() }
+      : { mode, form_id: publicFormId, email: normalizedEmailInput };
+  const inputsKey = JSON.stringify(linkRequest);
+
   // Cualquier cambio en los datos invalida el enlace generado anteriormente.
+  const result = storedResult?.inputsKey === inputsKey ? storedResult : null;
+
   useEffect(() => {
-    setResult(null);
     setGenerateError('');
     setCopied(false);
-  }, [mode, publicId, restrictedFormId, publicFormId, emailInput]);
-
-  const normalizedEmailInput = normalizeEmail(emailInput);
+  }, [inputsKey]);
 
   const verifiedEmailSet = useMemo(
     () => new Set(verifiedEmails.map((row) => row.normalized_email)),
@@ -209,14 +249,14 @@ export default function AccessLinksTab({
 
     setGenerating(true);
     setGenerateError('');
-    setResult(null);
+    setStoredResult(null);
 
-    const body =
-      mode === 'restricted'
-        ? { action: 'build_restricted_link', form_id: restrictedFormId, public_id: publicId.trim() }
-        : { action: 'build_public_link', form_id: publicFormId, email: normalizedEmailInput };
-
-    const { data, error } = await supabase.functions.invoke('admin-form-access-links', { body });
+    const { data, error } = await supabase.functions.invoke('admin-form-access-links', {
+      body: {
+        ...linkRequest,
+        action: mode === 'restricted' ? 'build_restricted_link' : 'build_public_link',
+      },
+    });
 
     if (error || !data?.ok) {
       console.error(error ?? data);
@@ -227,16 +267,52 @@ export default function AccessLinksTab({
       return;
     }
 
-    setResult({
+    setStoredResult({
+      inputsKey,
       url: data.url,
       form_title: data.form_title,
       summary:
         mode === 'restricted'
           ? `${data.student.name} · ${data.student.group_name || 'Sin grupo'}`
           : data.email,
+      recipient: data.recipient ?? null,
+      sent_to: null,
       warnings: data.warnings ?? [],
     });
     setGenerating(false);
+  };
+
+  const sendLink = async () => {
+    if (!result?.recipient) return;
+
+    const confirmed = confirm(
+      `¿Enviar el enlace de "${result.form_title}" a ${result.recipient}?` +
+        (result.sent_to ? '\n\nYa se ha enviado antes: se enviará otro correo.' : '')
+    );
+    if (!confirmed) return;
+
+    setSending(true);
+    setGenerateError('');
+
+    // El servidor vuelve a generar el enlace y decide el destinatario: no se
+    // le manda la URL ni el correo mostrados aquí.
+    const { data, error } = await supabase.functions.invoke('admin-form-access-links', {
+      body: { ...linkRequest, action: 'send_link' },
+    });
+
+    if (error || !data?.ok) {
+      console.error(error ?? data);
+      setGenerateError(
+        data?.message ?? describeFunctionError(data?.error, 'No se pudo enviar el enlace.')
+      );
+      setSending(false);
+      return;
+    }
+
+    setStoredResult((current) =>
+      current?.inputsKey === inputsKey ? { ...current, sent_to: data.sent_to } : current
+    );
+    setSending(false);
   };
 
   const copyLink = async () => {
@@ -498,16 +574,30 @@ export default function AccessLinksTab({
               <Copy className="w-4 h-4" />
               {copied ? 'Copiado' : 'Copiar enlace'}
             </button>
-            <a
-              href={result.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-all flex items-center justify-center gap-2"
+            <button
+              type="button"
+              onClick={sendLink}
+              disabled={!result.recipient || sending}
+              title={result.recipient ? `Enviar a ${result.recipient}` : 'No hay correo de contacto válido'}
+              className="flex-1 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
             >
-              <ExternalLink className="w-4 h-4" />
-              Abrir formulario
-            </a>
+              <Send className="w-4 h-4" />
+              {sending ? 'Enviando...' : result.sent_to ? 'Reenviar enlace' : 'Enviar enlace'}
+            </button>
           </div>
+
+          {result.recipient && !result.sent_to && (
+            <p className="text-sm text-slate-500 break-all">
+              Se enviará a <span className="font-semibold text-slate-700">{result.recipient}</span>.
+            </p>
+          )}
+
+          {result.sent_to && (
+            <p className="text-sm font-medium text-green-600 flex items-center gap-1.5 break-all">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              Enlace enviado a {result.sent_to}
+            </p>
+          )}
         </div>
       )}
     </div>

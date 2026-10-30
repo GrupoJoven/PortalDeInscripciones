@@ -110,7 +110,10 @@ export default function App() {
     };
 
     checkCoordinator();
-  }, [authUser]);
+    // Supabase vuelve a emitir la sesión (con un objeto nuevo) al refrescar el
+    // token o al volver a la pestaña: solo hay que comprobar el rol si cambia
+    // el usuario, o el panel se desmonta un instante y pierde su estado.
+  }, [authUser?.id]);
 
   
   const handleLogin = async (email: string, password: string) => {

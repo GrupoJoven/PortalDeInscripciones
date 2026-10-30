@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sendGmailEmail } from "../_shared/gmail.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -39,6 +40,21 @@ type StudentRow = {
   group_id: string | null;
 };
 
+type LinkFailure = { ok: false; error: string; message?: string };
+
+type LinkSuccess = {
+  ok: true;
+  url: string;
+  form_title: string;
+  /** Correo al que se enviaría el enlace; null si no hay uno válido. */
+  recipient: string | null;
+  student?: { name: string; group_name: string };
+  email?: string;
+  warnings: string[];
+};
+
+type LinkResult = LinkFailure | LinkSuccess;
+
 /**
  * Herramientas del panel de administración para generar a mano los mismos
  * enlaces prerrellenados que reciben las familias desde la portada:
@@ -51,6 +67,9 @@ type StudentRow = {
  *   identificador público del catecúmeno.
  * - build_public_link: enlace de un formulario público con el EMAIL DE
  *   CONTACTO prerrellenado (debe estar verificado).
+ * - send_link: genera de nuevo uno de los dos enlaces anteriores y lo envía
+ *   por correo al email de contacto. El enlace y el destinatario se calculan
+ *   aquí, nunca se aceptan del cliente.
  *
  * Solo para coordinadores autenticados.
  */
@@ -111,9 +130,11 @@ Deno.serve(async (req) => {
       case "verify_email_manually":
         return await verifyEmailManually(supabase, body?.email);
       case "build_restricted_link":
-        return await buildRestrictedLink(supabase, body?.form_id, body?.public_id);
+        return jsonResponse(await buildRestrictedLink(supabase, body?.form_id, body?.public_id), 200);
       case "build_public_link":
-        return await buildPublicLink(supabase, body?.form_id, body?.email);
+        return jsonResponse(await buildPublicLink(supabase, body?.form_id, body?.email), 200);
+      case "send_link":
+        return await sendLink(supabase, body);
       default:
         return jsonResponse({ ok: false, error: "unknown_action" }, 400);
     }
@@ -197,29 +218,64 @@ async function verifyEmailManually(supabase: ReturnType<typeof createClient>, ra
   return jsonResponse({ ok: true, status: "verified", email: inserted }, 200);
 }
 
+async function sendLink(supabase: ReturnType<typeof createClient>, body: any) {
+  const link: LinkResult =
+    body?.mode === "restricted"
+      ? await buildRestrictedLink(supabase, body?.form_id, body?.public_id)
+      : body?.mode === "public"
+        ? await buildPublicLink(supabase, body?.form_id, body?.email)
+        : { ok: false, error: "missing_fields" };
+
+  if (!link.ok) {
+    return jsonResponse(link, 200);
+  }
+
+  if (!link.recipient) {
+    return jsonResponse(
+      {
+        ok: false,
+        error: "missing_recipient",
+        message: "No hay un correo de contacto válido al que enviar el enlace.",
+      },
+      200
+    );
+  }
+
+  const { subject, html } = buildLinkEmail(link);
+
+  try {
+    await sendGmailEmail({ to: link.recipient, subject, html });
+  } catch (error) {
+    console.error("Error sending access link email:", error);
+    return jsonResponse(
+      { ok: false, error: "email_send_failed", message: "No se pudo enviar el correo. Inténtalo de nuevo." },
+      200
+    );
+  }
+
+  return jsonResponse({ ok: true, sent_to: link.recipient }, 200);
+}
+
 async function buildRestrictedLink(
   supabase: ReturnType<typeof createClient>,
   rawFormId: unknown,
   rawPublicId: unknown
-) {
+): Promise<LinkResult> {
   const formId = typeof rawFormId === "string" ? rawFormId.trim() : "";
   const publicId = typeof rawPublicId === "string" ? rawPublicId.trim().toUpperCase() : "";
 
   if (!formId || !publicId) {
-    return jsonResponse({ ok: false, error: "missing_fields" }, 400);
+    return { ok: false, error: "missing_fields" };
   }
 
   const form = await loadForm(supabase, formId);
 
   if (!form || form.access_type !== "restricted" || form.form_type === "payment") {
-    return jsonResponse(
-      {
-        ok: false,
-        error: "form_not_found",
-        message: "El formulario no existe o no es un formulario privado de inscripción.",
-      },
-      200
-    );
+    return {
+      ok: false,
+      error: "form_not_found",
+      message: "El formulario no existe o no es un formulario privado de inscripción.",
+    };
   }
 
   const { data: accessRow, error: accessError } = await supabase
@@ -230,40 +286,28 @@ async function buildRestrictedLink(
 
   if (accessError) {
     console.error("Error fetching student_public_access:", accessError);
-    return jsonResponse({ ok: false, error: "internal_error" }, 500);
+    throw accessError;
   }
 
-  if (!accessRow?.student_id) {
-    return jsonResponse(
-      {
-        ok: false,
-        error: "student_not_found",
-        message: `No hay ningún catecúmeno con el identificador ${publicId}.`,
-      },
-      200
-    );
-  }
-
-  const { data: student, error: studentError } = await supabase
-    .from("students")
-    .select("id, name, dni, gender, parent_email, school, birth_date, group_id")
-    .eq("id", accessRow.student_id)
-    .maybeSingle<StudentRow>();
+  const { data: student, error: studentError } = accessRow?.student_id
+    ? await supabase
+        .from("students")
+        .select("id, name, dni, gender, parent_email, school, birth_date, group_id")
+        .eq("id", accessRow.student_id)
+        .maybeSingle<StudentRow>()
+    : { data: null, error: null };
 
   if (studentError) {
     console.error("Error fetching student:", studentError);
-    return jsonResponse({ ok: false, error: "internal_error" }, 500);
+    throw studentError;
   }
 
   if (!student) {
-    return jsonResponse(
-      {
-        ok: false,
-        error: "student_not_found",
-        message: `No hay ningún catecúmeno con el identificador ${publicId}.`,
-      },
-      200
-    );
+    return {
+      ok: false,
+      error: "student_not_found",
+      message: `No hay ningún catecúmeno con el identificador ${publicId}.`,
+    };
   }
 
   let groupName = "";
@@ -277,7 +321,7 @@ async function buildRestrictedLink(
 
     if (groupError) {
       console.error("Error fetching group:", groupError);
-      return jsonResponse({ ok: false, error: "internal_error" }, 500);
+      throw groupError;
     }
 
     groupName = groupRow?.name ?? "";
@@ -297,13 +341,20 @@ async function buildRestrictedLink(
 
   if (relationError) {
     console.error("Error fetching registration_form_groups:", relationError);
-    return jsonResponse({ ok: false, error: "internal_error" }, 500);
+    throw relationError;
   }
 
   if (!relationRow) {
     warnings.push(
       `El grupo del catecúmeno (${groupName || "sin grupo"}) no tiene asignado este formulario: desde la portada no le aparecería.`
     );
+  }
+
+  const parentEmail = normalizeEmail(student.parent_email);
+  const recipient = isValidEmail(parentEmail) ? parentEmail : null;
+
+  if (!recipient) {
+    warnings.push("El catecúmeno no tiene un correo de contacto válido: el enlace no se puede enviar por correo.");
   }
 
   // Mismo prerrelleno que get-registration-forms-by-public-id.
@@ -318,45 +369,36 @@ async function buildRestrictedLink(
     [form.prefill_group_entry ?? ""]: groupName,
   });
 
-  return jsonResponse(
-    {
-      ok: true,
-      url,
-      form_title: form.title,
-      student: {
-        name: student.name,
-        group_name: groupName,
-        parent_email: student.parent_email,
-      },
-      warnings,
-    },
-    200
-  );
+  return {
+    ok: true,
+    url,
+    form_title: form.title,
+    recipient,
+    student: { name: student.name, group_name: groupName },
+    warnings,
+  };
 }
 
 async function buildPublicLink(
   supabase: ReturnType<typeof createClient>,
   rawFormId: unknown,
   rawEmail: unknown
-) {
+): Promise<LinkResult> {
   const formId = typeof rawFormId === "string" ? rawFormId.trim() : "";
   const normalizedEmail = normalizeEmail(typeof rawEmail === "string" ? rawEmail : "");
 
   if (!formId || !normalizedEmail) {
-    return jsonResponse({ ok: false, error: "missing_fields" }, 400);
+    return { ok: false, error: "missing_fields" };
   }
 
   const form = await loadForm(supabase, formId);
 
   if (!form || form.access_type !== "public" || form.form_type === "payment") {
-    return jsonResponse(
-      {
-        ok: false,
-        error: "form_not_found",
-        message: "El formulario no existe o no es un formulario público de inscripción.",
-      },
-      200
-    );
+    return {
+      ok: false,
+      error: "form_not_found",
+      message: "El formulario no existe o no es un formulario público de inscripción.",
+    };
   }
 
   // Las respuestas de formularios públicos con un email no verificado se
@@ -369,18 +411,15 @@ async function buildPublicLink(
 
   if (verifiedError) {
     console.error("Error fetching parent_email_verifications:", verifiedError);
-    return jsonResponse({ ok: false, error: "internal_error" }, 500);
+    throw verifiedError;
   }
 
   if (!verifiedRow) {
-    return jsonResponse(
-      {
-        ok: false,
-        error: "email_not_verified",
-        message: "Ese correo no está verificado. Verifícalo antes de generar el enlace.",
-      },
-      200
-    );
+    return {
+      ok: false,
+      error: "email_not_verified",
+      message: "Ese correo no está verificado. Verifícalo antes de generar el enlace.",
+    };
   }
 
   const warnings = getFormStatusWarnings(form);
@@ -399,7 +438,49 @@ async function buildPublicLink(
     [form.prefill_parent_email_entry ?? ""]: normalizedEmail,
   });
 
-  return jsonResponse({ ok: true, url, form_title: form.title, email: normalizedEmail, warnings }, 200);
+  return {
+    ok: true,
+    url,
+    form_title: form.title,
+    recipient: normalizedEmail,
+    email: normalizedEmail,
+    warnings,
+  };
+}
+
+function buildLinkEmail(link: LinkSuccess) {
+  const subject = `Enlace de acceso al formulario: ${link.form_title}`;
+
+  const forWhom = link.student
+    ? ` para <strong>${escapeHtml(link.student.name)}</strong>`
+    : "";
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.5; color: #111827;">
+      <h2>Enlace de acceso al formulario</h2>
+      <p>Hola,</p>
+      <p>
+        Te enviamos el enlace para rellenar el formulario
+        <strong>${escapeHtml(link.form_title)}</strong>${forWhom}.
+      </p>
+      <p>
+        El formulario ya tiene rellenados algunos datos. <strong>No los modifiques</strong>:
+        si no coinciden con los que tenemos registrados, la inscripción no será válida.
+      </p>
+      <p>
+        <a href="${escapeHtml(link.url)}" style="display:inline-block;padding:12px 18px;background:#4f46e5;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:bold;">
+          Abrir formulario
+        </a>
+      </p>
+      <p>Si el botón no funciona, copia y pega este enlace en tu navegador:</p>
+      <p style="word-break:break-all;">${escapeHtml(link.url)}</p>
+      <p style="margin-top:24px;color:#6b7280;font-size:13px;">
+        NOTA: no respondas a este correo electrónico, ha sido enviado de manera automática.
+      </p>
+    </div>
+  `;
+
+  return { subject, html };
 }
 
 async function loadForm(supabase: ReturnType<typeof createClient>, formId: string) {
@@ -487,6 +568,15 @@ function normalizeEmail(email: string | null | undefined) {
 
 function isValidEmail(email: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function jsonResponse(body: unknown, status = 200) {
