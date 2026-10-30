@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { CalendarCheck, ChevronDown, CirclePlay, Receipt, Tent } from 'lucide-react';
+import { Backpack, CalendarCheck, ChevronDown, CirclePlay, Receipt, Tent } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 import { TUTORIAL_CATEGORIES } from '../lib/tutorials';
@@ -10,6 +10,7 @@ import type { TutorialCategoryId } from '../lib/tutorials';
 const CATEGORY_ICONS: Record<TutorialCategoryId, LucideIcon> = {
   'inicio-curso': CalendarCheck,
   acampadas: Tent,
+  'campamento-camino': Backpack,
   pagos: Receipt,
 };
 
@@ -71,7 +72,7 @@ export default function TutorialsPage() {
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2">
         {TUTORIAL_CATEGORIES.map((category) => {
           const Icon = CATEGORY_ICONS[category.id];
           const isSelected = category.id === selectedCategory?.id;

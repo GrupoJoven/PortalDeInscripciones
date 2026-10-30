@@ -9,6 +9,8 @@ export type TutorialId =
   | 'inscripcion-continuan'
   | 'acampada-comunion'
   | 'acampada-preconfirmacion'
+  | 'campamento-verano'
+  | 'camino-santiago'
   | 'formulario-pago';
 
 export type Tutorial = {
@@ -18,7 +20,7 @@ export type Tutorial = {
   videoUrl: string;
 };
 
-export type TutorialCategoryId = 'inicio-curso' | 'acampadas' | 'pagos';
+export type TutorialCategoryId = 'inicio-curso' | 'acampadas' | 'campamento-camino' | 'pagos';
 
 export type TutorialCategory = {
   id: TutorialCategoryId;
@@ -71,6 +73,25 @@ export const TUTORIAL_CATEGORIES: TutorialCategory[] = [
         title: 'Preconfirmación y Confirmación',
         description: 'Paso a paso para inscribir a tu hijo/a en la acampada de Preconfirmación o Confirmación.',
         videoUrl: 'https://sanpas.es/wp-content/uploads/2026/10/TutorialAcampadaPreConfir.mp4',
+      },
+    ],
+  },
+  {
+    id: 'campamento-camino',
+    title: 'Inscripción en campamento/camino',
+    description: 'Cómo apuntarse al campamento de verano y al Camino de Santiago.',
+    tutorials: [
+      {
+        id: 'campamento-verano',
+        title: 'Campamento de verano',
+        description: 'Paso a paso para inscribir a tu hijo/a en el campamento de verano.',
+        videoUrl: 'https://sanpas.es/wp-content/uploads/2026/10/TutorialCampa.mp4',
+      },
+      {
+        id: 'camino-santiago',
+        title: 'Camino de Santiago',
+        description: 'Paso a paso para inscribir a tu hijo/a en el Camino de Santiago.',
+        videoUrl: 'https://sanpas.es/wp-content/uploads/2026/10/TutorialCamino.mp4',
       },
     ],
   },

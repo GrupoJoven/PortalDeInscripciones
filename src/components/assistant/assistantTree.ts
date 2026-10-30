@@ -183,6 +183,10 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
         label: 'Ver el vídeo: acampada de Preconfirmación o Confirmación',
         action: { tutorial: 'acampada-preconfirmacion' },
       },
+      {
+        label: 'Ver el vídeo: Camino de Santiago',
+        action: { tutorial: 'camino-santiago' },
+      },
     ],
   },
 
@@ -210,6 +214,10 @@ export const ASSISTANT_TREE: Record<AssistantNodeId, AssistantNode> = {
       {
         label: 'Ver el vídeo: acampada de comunión o postcomunión',
         action: { tutorial: 'acampada-comunion' },
+      },
+      {
+        label: 'Ver el vídeo: campamento de verano',
+        action: { tutorial: 'campamento-verano' },
       },
     ],
   },
