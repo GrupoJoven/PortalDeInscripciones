@@ -23,6 +23,7 @@ import { es } from 'date-fns/locale';
 
 import Login from './Login';
 import DniAddressComparisonsModal from './DniAddressComparisonsModal';
+import AccessLinksTab from './AccessLinksTab';
 import { supabase } from '../lib/supabaseClient';
 import {
   DEFAULT_SIBLING_DISCOUNTS,
@@ -74,7 +75,7 @@ export default function AdminPanel({
   onLogout: () => Promise<void>;
 }) {
 
-  const [activeTab, setActiveTab] = useState<'forms' | 'access'>('forms');
+  const [activeTab, setActiveTab] = useState<'forms' | 'access' | 'links'>('forms');
 
   const [forms, setForms] = useState<RegistrationForm[]>([]);
   const [groups, setGroups] = useState<GroupOption[]>([]);
@@ -1581,7 +1582,7 @@ export default function AdminPanel({
             Panel de Administración
           </h1>
           <p className="text-slate-500">
-            Gestiona formularios y accesos públicos de los catecúmenos.
+            Gestiona formularios, accesos públicos de los catecúmenos y enlaces de acceso.
           </p>
         </div>
       </div>
@@ -1604,6 +1605,15 @@ export default function AdminPanel({
             }`}
         >
           Accesos
+        </button>
+        <button
+          onClick={() => setActiveTab('links')}
+          className={`px-6 py-2 rounded-lg font-bold transition-all ${activeTab === 'links'
+            ? 'bg-white text-indigo-600 shadow-sm'
+            : 'text-slate-500 hover:text-slate-700'
+            }`}
+        >
+          Enlaces
         </button>
       </div>
 
@@ -1906,6 +1916,10 @@ export default function AdminPanel({
             </div>
           )}
         </>
+      )}
+
+      {activeTab === 'links' && (
+        <AccessLinksTab forms={forms} loadingForms={loadingForms} />
       )}
 
       {remindersModalOpen && (
