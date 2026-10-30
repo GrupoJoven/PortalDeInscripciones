@@ -1919,7 +1919,11 @@ export default function AdminPanel({
       )}
 
       {activeTab === 'links' && (
-        <AccessLinksTab forms={forms} loadingForms={loadingForms} />
+        // Los formularios bloqueados son las plantillas: no tiene sentido enviarlas.
+        <AccessLinksTab
+          forms={forms.filter((form) => !blockedFormIds.includes(form.id))}
+          loadingForms={loadingForms}
+        />
       )}
 
       {remindersModalOpen && (
