@@ -3,7 +3,7 @@ import { useState } from 'react';
 /** Datos de la transferencia; el IBAN se muestra en grupos de 4 pero se copia sin espacios. */
 export const BANK_DETAILS = [
   { label: 'IBAN', value: 'ES1031590078512779528427', display: 'ES10 3159 0078 5127 7952 8427' },
-  { label: 'Beneficiario', value: 'PARROQUIA SAN PASCUAL BAILÓN', display: 'PARROQUIA SAN PASCUAL BAILÓN' },
+  { label: 'Beneficiario', value: 'PARROQUIA DE SAN PASCUAL BAILÓN', display: 'PARROQUIA DE SAN PASCUAL BAILÓN' },
 ] as const;
 
 const COPIED_FEEDBACK_MS = 2000;
